@@ -17,17 +17,15 @@ export const AudioFeedback: React.FC<AudioFeedbackProps> = React.memo(
     const audioFeedbackEnabled = getSetting("audio_feedback") || false;
 
     return (
-      <div className="flex flex-col">
-        <ToggleSwitch
-          checked={audioFeedbackEnabled}
-          onChange={(enabled) => updateSetting("audio_feedback", enabled)}
-          isUpdating={isUpdating("audio_feedback")}
-          label={t("settings.sound.audioFeedback.label")}
-          description={t("settings.sound.audioFeedback.description")}
-          descriptionMode={descriptionMode}
-          grouped={grouped}
-        />
-      </div>
+      <ToggleSwitch
+        checked={audioFeedbackEnabled}
+        onChange={(enabled) => updateSetting("audio_feedback", enabled)}
+        isUpdating={isUpdating("audio_feedback")}
+        label={t("settings.sound.audioFeedback.label")}
+        description={t("settings.sound.audioFeedback.description")}
+        descriptionMode={descriptionMode}
+        grouped={grouped}
+      />
     );
   },
 );

@@ -706,10 +706,6 @@
       "dark": "Scuro"
     }
   },
-  "overlay": {
-    "transcribing": "Trascrizione...",
-    "processing": "Elaborazione..."
-  },
   "whatsNew": {
     "title": "Novità in Voce v{{version}}"
   },

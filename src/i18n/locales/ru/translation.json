@@ -706,10 +706,6 @@
       "dark": "Тёмная"
     }
   },
-  "overlay": {
-    "transcribing": "Расшифровка...",
-    "processing": "Обработка..."
-  },
   "whatsNew": {
     "title": "Новое в Voce v{{version}}"
   },

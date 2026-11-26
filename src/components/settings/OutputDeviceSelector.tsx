@@ -52,31 +52,29 @@ export const OutputDeviceSelector: React.FC<OutputDeviceSelectorProps> =
           grouped={grouped}
           disabled={disabled}
         >
-          <div className="flex items-center space-x-1">
-            <Dropdown
-              options={outputDeviceOptions}
-              selectedValue={selectedOutputDevice}
-              onSelect={handleOutputDeviceSelect}
-              placeholder={
-                isLoading || outputDevices.length === 0
-                  ? t("settings.sound.outputDevice.loading")
-                  : t("settings.sound.outputDevice.placeholder")
-              }
-              disabled={
-                disabled ||
-                isUpdating("selected_output_device") ||
-                isLoading ||
-                outputDevices.length === 0
-              }
-              onRefresh={refreshOutputDevices}
-            />
-            <ResetButton
-              onClick={handleReset}
-              disabled={
-                disabled || isUpdating("selected_output_device") || isLoading
-              }
-            />
-          </div>
+          <ResetButton
+            onClick={handleReset}
+            disabled={
+              disabled || isUpdating("selected_output_device") || isLoading
+            }
+          />
+          <Dropdown
+            options={outputDeviceOptions}
+            selectedValue={selectedOutputDevice}
+            onSelect={handleOutputDeviceSelect}
+            placeholder={
+              isLoading || outputDevices.length === 0
+                ? t("settings.sound.outputDevice.loading")
+                : t("settings.sound.outputDevice.placeholder")
+            }
+            disabled={
+              disabled ||
+              isUpdating("selected_output_device") ||
+              isLoading ||
+              outputDevices.length === 0
+            }
+            onRefresh={refreshOutputDevices}
+          />
         </SettingContainer>
       );
     },

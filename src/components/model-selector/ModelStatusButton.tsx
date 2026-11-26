@@ -1,4 +1,5 @@
 import React from "react";
+import { ChevronsUpDown } from "lucide-react";
 
 type ModelStatus =
   | "ready"
@@ -18,59 +19,42 @@ interface ModelStatusButtonProps {
   className?: string;
 }
 
+const statusColor: Record<ModelStatus, string> = {
+  ready: "bg-accent",
+  loading: "bg-accent animate-pulse",
+  downloading: "bg-accent animate-pulse",
+  verifying: "bg-accent animate-pulse",
+  extracting: "bg-accent animate-pulse",
+  error: "bg-danger",
+  unloaded: "bg-track",
+  none: "bg-danger",
+};
+
+/** Sidebar footer: the active model, which opens the model switcher. */
 const ModelStatusButton: React.FC<ModelStatusButtonProps> = ({
   status,
   displayText,
   isDropdownOpen,
   onClick,
   className = "",
-}) => {
-  const getStatusColor = (status: ModelStatus): string => {
-    switch (status) {
-      case "ready":
-        return "bg-green-400";
-      case "loading":
-        return "bg-yellow-400 animate-pulse";
-      case "downloading":
-        return "bg-logo-primary animate-pulse";
-      case "verifying":
-        return "bg-orange-400 animate-pulse";
-      case "extracting":
-        return "bg-orange-400 animate-pulse";
-      case "error":
-        return "bg-red-400";
-      case "unloaded":
-        return "bg-mid-gray/60";
-      case "none":
-        return "bg-red-400";
-      default:
-        return "bg-mid-gray/60";
-    }
-  };
-
-  return (
-    <button
-      onClick={onClick}
-      className={`flex items-center gap-2 hover:text-text/80 transition-colors ${className}`}
-      title={`Model status: ${displayText}`}
-    >
-      <div className={`w-2 h-2 rounded-full ${getStatusColor(status)}`} />
-      <span className="max-w-28 truncate">{displayText}</span>
-      <svg
-        className={`w-3 h-3 transition-transform ${isDropdownOpen ? "rotate-180" : ""}`}
-        fill="none"
-        stroke="currentColor"
-        viewBox="0 0 24 24"
-      >
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeWidth={2}
-          d="M19 9l-7 7-7-7"
-        />
-      </svg>
-    </button>
-  );
-};
+}) => (
+  <button
+    type="button"
+    onClick={onClick}
+    aria-expanded={isDropdownOpen}
+    className={`w-full flex items-center gap-1.5 text-[12.5px] leading-4 font-medium text-text-2 hover:text-text transition-colors cursor-pointer ${className}`}
+    title={displayText}
+  >
+    <span
+      className={`w-1.5 h-1.5 rounded-full shrink-0 ${statusColor[status]}`}
+    />
+    <span className="truncate">{displayText}</span>
+    <ChevronsUpDown
+      width={13}
+      height={13}
+      className="ms-auto shrink-0 text-text-3"
+    />
+  </button>
+);
 
 export default ModelStatusButton;

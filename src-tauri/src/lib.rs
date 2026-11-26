@@ -1033,6 +1033,18 @@ pub fn run(cli_args: CliArgs) {
                     .maximizable(true)
                     .visible(false);
 
+            // Hidden title bar: the sidebar runs to the top and the traffic
+            // lights sit over it, centered in its 40 px drag strip.
+            #[cfg(target_os = "macos")]
+            {
+                win_builder = win_builder
+                    .title_bar_style(tauri::TitleBarStyle::Overlay)
+                    .hidden_title(true);
+                // Window buttons stay where macOS puts them. Moving them
+                // (traffic_light_position) leaves their hover glyphs tracking
+                // the old spot, and AppKit layout passes can snap them back.
+            }
+
             if let Some(data_dir) = portable::data_dir() {
                 win_builder = win_builder.data_directory(data_dir.join("webview"));
             }

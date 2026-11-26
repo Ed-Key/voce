@@ -1,7 +1,6 @@
 import React from "react";
 import { useTranslation } from "react-i18next";
 import { useSettings } from "../../hooks/useSettings";
-import { Input } from "../ui/Input";
 import { SettingContainer } from "../ui/SettingContainer";
 
 interface HistoryLimitProps {
@@ -33,20 +32,21 @@ export const HistoryLimit: React.FC<HistoryLimitProps> = ({
       grouped={grouped}
       layout="horizontal"
     >
-      <div className="flex items-center space-x-2">
-        <Input
+      <label className="v-field w-[108px]">
+        <input
           type="number"
           min="0"
           max="1000"
           value={historyLimit}
           onChange={handleChange}
           disabled={isUpdating("history_limit")}
-          className="w-20"
+          aria-label={t("settings.debug.historyLimit.title")}
+          className="w-full min-w-0 bg-transparent outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none"
         />
-        <span className="text-sm text-text">
+        <span className="text-text-3 font-normal">
           {t("settings.debug.historyLimit.entries")}
         </span>
-      </div>
+      </label>
     </SettingContainer>
   );
 };

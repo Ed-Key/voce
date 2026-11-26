@@ -6,26 +6,17 @@ interface SettingsGroupProps {
   children: React.ReactNode;
 }
 
+/** A sentence-case label over one card of hairline-separated rows. */
 export const SettingsGroup: React.FC<SettingsGroupProps> = ({
   title,
   description,
   children,
 }) => {
   return (
-    <div className="space-y-2">
-      {title && (
-        <div className="px-4">
-          <h2 className="text-xs font-medium text-mid-gray uppercase tracking-wide">
-            {title}
-          </h2>
-          {description && (
-            <p className="text-xs text-mid-gray mt-1">{description}</p>
-          )}
-        </div>
-      )}
-      <div className="bg-background border border-mid-gray/20 rounded-lg overflow-visible">
-        <div className="divide-y divide-mid-gray/20">{children}</div>
-      </div>
-    </div>
+    <section>
+      {title && <h2 className="v-gl">{title}</h2>}
+      {description && <p className="v-meta -mt-1 mb-2 ms-3.5">{description}</p>}
+      <div className="v-group">{children}</div>
+    </section>
   );
 };

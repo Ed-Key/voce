@@ -3,301 +3,326 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import "./RecordingOverlay.css";
 import { commands, events } from "@/bindings";
-import type {
-  StreamPhase,
-  StreamPhaseEvent,
-  StreamTextEvent,
-  StreamWorkKind,
-} from "@/bindings";
+import type { StreamTextEvent } from "@/bindings";
 import i18n, { syncLanguageFromSettings } from "@/i18n";
 import { getLanguageDirection } from "@/lib/utils/rtl";
+import {
+  BADGE,
+  type EndReason,
+  type Frame,
+  LINE,
+  type OverlayEvent,
+  type Session,
+  SLIP,
+  drawParts,
+  fingerLevels,
+  frameAt,
+  messageCardWidth,
+  newLevelInput,
+  newReact,
+  reactStep,
+  readLevels,
+  reduce,
+} from "./slip";
 
-type OverlayState = "recording" | "streaming" | "transcribing" | "processing";
+const MESSAGE_KEY: Record<EndReason, string> = {
+  cancelled: "overlay.cancelled",
+  nothing_heard: "overlay.nothingHeard",
+  error: "overlay.couldNotTranscribe",
+};
+const END_REASONS = Object.keys(MESSAGE_KEY);
+const EMPTY_TEXT: StreamTextEvent = { committed: "", tentative: "" };
 
-// Number of reactive bars in the waveform (the simple, smoothed style shared by
-// every overlay form). Mic levels arrive as 16 FFT buckets; we take the first N.
-const WAVE_BARS = 9;
-
+// The Slip overlay: the hand mark in a card that widens into a slip of live
+// text. Motion comes from slip.ts as a pure function of the session and the
+// clock; this component feeds it events and paints each frame straight onto
+// the DOM, so a frame never waits on a React render.
 const RecordingOverlay: React.FC = () => {
   const { t } = useTranslation();
-  const [isVisible, setIsVisible] = useState(false);
-  const [state, setState] = useState<OverlayState>("recording");
-  // `Stream::play()` returning does not mean hardware callbacks are flowing.
-  // Stay visually in an arming state until the backend processes the first
-  // actual microphone sample chunk.
-  const [captureReady, setCaptureReady] = useState(false);
-  const [levels, setLevels] = useState<number[]>(Array(WAVE_BARS).fill(0));
-  const [streamText, setStreamText] = useState<StreamTextEvent>({
-    committed: "",
-    tentative: "",
-  });
-  const [phase, setPhase] = useState<StreamPhase>("listening");
-  const [workKind, setWorkKind] = useState<StreamWorkKind>("transcribing");
-  const [elapsed, setElapsed] = useState(0);
-  // Bumped on each new streaming session so the Live card remounts fresh (replays
-  // the pop-in, and never animates in from the previous panel's open size).
-  const [session, setSession] = useState(0);
-  // Overlay placement (top vs bottom of the screen). The Live panel grows downward
-  // from a top overlay (oldest line under the pill) and upward from a bottom one.
+  const [mounted, setMounted] = useState(false);
+  // Bumped on every new press. The frame loop restarts on it, so a press that
+  // lands between the last frame's unmount and React's commit still runs.
+  const [run, setRun] = useState(0);
+  const [text, setText] = useState<StreamTextEvent>(EMPTY_TEXT);
+  const [reason, setReason] = useState<EndReason | null>(null);
   const [position, setPosition] = useState<"top" | "bottom">("bottom");
-  // True once live text overflows the cap. A top overlay fades its top edge only
-  // while overflowing, so the resting first line stays crisp flush under the pill.
-  const [overflowing, setOverflowing] = useState(false);
-
-  const smoothedLevelsRef = useRef<number[]>(Array(16).fill(0));
-  // Live-text scroll-back: the text region "sticks" to the newest line while the
-  // user is at the bottom; if they scroll up to read history, auto-follow pauses
-  // until they scroll back down.
-  const capRef = useRef<HTMLDivElement>(null);
-  const pinnedRef = useRef(true);
   const direction = getLanguageDirection(i18n.language);
 
+  const sessionRef = useRef<Session | null>(null);
+  const levelsRef = useRef(newLevelInput());
+  const reactRef = useRef(newReact());
+  const lvRef = useRef([0, 0, 0, 0]);
+  const lastTickRef = useRef(0);
+  const positionRef = useRef(position);
+  // Only the live ("streaming") overlay has room for text; Minimal mode keeps
+  // the compact card even when the model streams.
+  const liveRef = useRef(false);
+  positionRef.current = position;
+
+  const cardRef = useRef<HTMLDivElement>(null);
+  const groupRef = useRef<SVGGElement>(null);
+  const lineRefs = useRef<(SVGLineElement | null)[]>([]);
+  const badgeRef = useRef<SVGCircleElement>(null);
+  const clipRef = useRef<HTMLDivElement>(null);
+  const flowRef = useRef<HTMLDivElement>(null);
+  const tentRef = useRef<HTMLSpanElement>(null);
+  const msgRef = useRef<HTMLSpanElement>(null);
+  const measureRef = useRef<HTMLDivElement>(null);
+  const measureMsgRef = useRef<HTMLSpanElement>(null);
+
+  const dispatchRef = useRef<(ev: OverlayEvent) => void>(() => {});
+  dispatchRef.current = (ev: OverlayEvent) => {
+    const prev = sessionRef.current;
+    const next = reduce(prev, ev, performance.now(), {
+      lv: lvRef.current,
+      msgW: (r) => {
+        const span = measureMsgRef.current;
+        if (!span) return 0;
+        span.textContent = t(MESSAGE_KEY[r]);
+        return messageCardWidth(span.offsetWidth);
+      },
+    });
+    if (next && next !== prev) {
+      // A new press: fresh text, levels and message.
+      reactRef.current = newReact();
+      lvRef.current = [0, 0, 0, 0];
+      setText(EMPTY_TEXT);
+      setReason(null);
+      setRun((n) => n + 1);
+    }
+    sessionRef.current = next;
+    if (next) setMounted(true);
+  };
+  const dispatch = (ev: OverlayEvent) => dispatchRef.current(ev);
+
   useEffect(() => {
-    const setupEventListeners = async () => {
-      const unlistenShow = await listen("show-overlay", async (event) => {
-        const overlayState = event.payload as OverlayState;
-        // Reset synchronously before settings I/O. A fast microphone can emit
-        // recording-ready while the awaits below are in flight; resetting after
-        // them would overwrite that event and leave the overlay stuck arming.
-        if (overlayState === "recording" || overlayState === "streaming") {
-          setCaptureReady(false);
-          smoothedLevelsRef.current = Array(16).fill(0);
-          setLevels(Array(WAVE_BARS).fill(0));
-          setStreamText({ committed: "", tentative: "" });
-        }
+    let disposed = false;
+    const unlisteners: (() => void)[] = [];
+    const keep = (unlisten: () => void) =>
+      disposed ? unlisten() : unlisteners.push(unlisten);
 
-        await syncLanguageFromSettings();
-        // The Live panel flows downward from a top overlay and upward from a
-        // bottom one; read the placement so the layout can flip to match.
-        try {
-          const settings = await commands.getAppSettings();
-          if (settings.status === "ok") {
-            setPosition(
-              settings.data.overlay_position === "top" ? "top" : "bottom",
-            );
+    const setup = async () => {
+      keep(
+        await listen<string>("show-overlay", async (event) => {
+          // Dispatch before any settings I/O: a fast microphone can report
+          // ready while the awaits below are in flight.
+          if (event.payload === "recording" || event.payload === "streaming")
+            liveRef.current = event.payload === "streaming";
+          dispatch({ type: "show", state: event.payload });
+          await syncLanguageFromSettings();
+          try {
+            const settings = await commands.getAppSettings();
+            if (settings.status === "ok") {
+              setPosition(
+                settings.data.overlay_position === "top" ? "top" : "bottom",
+              );
+            }
+          } catch {
+            // Keep the previous placement if settings can't be read.
           }
-        } catch {
-          // Keep the previous/default placement if settings can't be read.
-        }
-        setState(overlayState);
-        if (overlayState === "streaming") {
-          setPhase("listening");
-          setWorkKind("transcribing");
-          setElapsed(0);
-          setSession((s) => s + 1); // remount the card fresh for this session
-        }
-        setIsVisible(true);
-      });
-
-      const unlistenHide = await listen("hide-overlay", () => {
-        setIsVisible(false);
-        setCaptureReady(false);
-      });
-
-      const unlistenReady = await listen("recording-ready", () => {
-        setElapsed(0);
-        setCaptureReady(true);
-      });
-
-      const unlistenLevel = await listen<number[]>("mic-level", (event) => {
-        const newLevels = event.payload as number[];
-        // Exponential smoothing across the 16 buckets, then take the first N
-        // bars for the shared waveform.
-        const smoothed = smoothedLevelsRef.current.map((prev, i) => {
-          const target = newLevels[i] || 0;
-          return prev * 0.7 + target * 0.3;
-        });
-        smoothedLevelsRef.current = smoothed;
-        setLevels(smoothed.slice(0, WAVE_BARS));
-      });
-
-      const unlistenStream = await events.streamTextEvent.listen((event) => {
-        setStreamText(event.payload);
-      });
-
-      const unlistenPhase = await events.streamPhaseEvent.listen((event) => {
-        const payload: StreamPhaseEvent = event.payload;
-        setPhase(payload.phase);
-        if (payload.kind) setWorkKind(payload.kind);
-      });
-
-      return () => {
-        unlistenShow();
-        unlistenHide();
-        unlistenReady();
-        unlistenLevel();
-        unlistenStream();
-        unlistenPhase();
-      };
+        }),
+      );
+      keep(await listen("hide-overlay", () => dispatch({ type: "hide" })));
+      keep(await listen("recording-ready", () => dispatch({ type: "ready" })));
+      keep(
+        await listen<string>("overlay-ended", (event) => {
+          if (!END_REASONS.includes(event.payload)) return;
+          const r = event.payload as EndReason;
+          const s = sessionRef.current;
+          if (s && s.end === null && s.tExit === null) setReason(r);
+          dispatch({ type: "ended", reason: r });
+        }),
+      );
+      keep(
+        await listen<number[]>("mic-level", (event) =>
+          readLevels(levelsRef.current, event.payload, performance.now()),
+        ),
+      );
+      keep(
+        await events.streamTextEvent.listen((event) => {
+          const s = sessionRef.current;
+          if (!liveRef.current) return;
+          if (!s || s.end !== null || s.tExit !== null) return;
+          dispatch({ type: "text", ...event.payload });
+          setText(event.payload);
+        }),
+      );
+      keep(
+        await events.streamPhaseEvent.listen((event) => {
+          if (event.payload.phase === "working") {
+            dispatch({
+              type: "phase",
+              kind: event.payload.kind ?? "transcribing",
+            });
+          }
+        }),
+      );
     };
-
-    setupEventListeners();
+    setup();
+    return () => {
+      disposed = true;
+      unlisteners.forEach((unlisten) => unlisten());
+    };
   }, []);
 
-  // Elapsed capture timer starts only once microphone samples are flowing.
-  useEffect(() => {
-    if (state !== "streaming" || !isVisible || !captureReady) return;
-    const id = setInterval(() => setElapsed((e) => e + 1), 1000);
-    return () => clearInterval(id);
-  }, [state, isVisible, captureReady]);
-
-  // Stick to the bottom as text streams in — but only while pinned, so a user who
-  // has scrolled up to read history isn't yanked back down by the next chunk.
+  // Count rendered lines so a new line can turn in. Measured off-screen at the
+  // full slip width, since the visible text may still be hidden or widening.
   useLayoutEffect(() => {
-    const el = capRef.current;
-    if (!el) return;
-    // Fade the top edge only once text actually overflows the cap.
-    setOverflowing(el.scrollHeight > el.clientHeight + 1);
-    if (pinnedRef.current) el.scrollTop = el.scrollHeight;
-  }, [streamText]);
+    const measure = () => {
+      const el = measureRef.current;
+      if (!el || !sessionRef.current) return;
+      if (!text.committed && !text.tentative) return;
+      dispatch({ type: "lines", n: Math.round(el.offsetHeight / LINE) });
+    };
+    measure();
+    document.fonts?.ready.then(measure);
+  }, [text]);
 
-  // Each fresh streaming session starts pinned to the bottom, fade cleared.
-  useEffect(() => {
-    pinnedRef.current = true;
-    setOverflowing(false);
-  }, [session]);
+  // Frame loop while mounted.
+  useLayoutEffect(() => {
+    if (!mounted) return;
+    let raf = 0;
+    lastTickRef.current = performance.now();
+    const tick = () => {
+      const s = sessionRef.current;
+      const now = performance.now();
+      const dt = Math.min(100, Math.max(0, now - lastTickRef.current));
+      lastTickRef.current = now;
+      if (!s) {
+        setMounted(false);
+        return;
+      }
+      // The fingers follow the voice until release, then hold still.
+      if (s.tRelease === null && s.end === null && s.tExit === null) {
+        reactStep(reactRef.current, dt, now, levelsRef.current);
+        lvRef.current = fingerLevels(reactRef.current.lev, now);
+      }
+      const frame = frameAt(s, now, lvRef.current);
+      paint(frame);
+      if (frame.done) {
+        sessionRef.current = null;
+        setMounted(false);
+        return;
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    tick();
+    return () => cancelAnimationFrame(raf);
+  }, [mounted, run]);
 
-  if (!isVisible) return null;
+  function paint(f: Frame) {
+    const card = cardRef.current;
+    const group = groupRef.current;
+    if (!card || !group) return;
+    const c = f.card;
+    const dy = positionRef.current === "top" ? -c.dy : c.dy;
+    card.style.width = `${c.w.toFixed(1)}px`;
+    card.style.height = `${c.h.toFixed(1)}px`;
+    card.style.borderRadius = `${c.r.toFixed(1)}px`;
+    card.style.paddingInlineEnd = `${c.pr.toFixed(1)}px`;
+    card.style.opacity = c.op.toFixed(3);
+    card.style.transform = `translateY(${dy.toFixed(2)}px)`;
+    card.style.alignItems = f.text ? "flex-end" : "center";
 
-  // Re-pin when the user is within ~a line of the bottom; unpin otherwise.
-  const handleStreamScroll = () => {
-    const el = capRef.current;
-    if (!el) return;
-    pinnedRef.current = el.scrollHeight - el.scrollTop - el.clientHeight <= 16;
-  };
+    const clip = clipRef.current;
+    const flow = flowRef.current;
+    if (clip && flow) {
+      if (f.text) {
+        clip.style.display = "block";
+        clip.style.height = `${(LINE * f.text.clip).toFixed(1)}px`;
+        clip.style.opacity = f.text.op.toFixed(3);
+        flow.style.transform = `translateY(${f.text.shift.toFixed(2)}px)`;
+        flow.style.setProperty("--slip-dim", f.text.dim.toFixed(3));
+        tentRef.current?.classList.toggle("settled", !f.text.tentative);
+      } else {
+        clip.style.display = "none";
+      }
+    }
+    const msg = msgRef.current;
+    if (msg) {
+      msg.style.display = f.msg ? "block" : "none";
+      if (f.msg) {
+        msg.style.opacity = f.msg.op.toFixed(3);
+        msg.classList.toggle("err", f.msg.reason === "error");
+      }
+    }
 
-  const fmtTime = (s: number) =>
-    `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
-
-  // ---- Shared building blocks (one visual language for every overlay form) ----
-  const waveform = (
-    <div className={`swave ${captureReady ? "ready" : "arming"}`}>
-      {levels.map((v, i) => (
-        <i
-          key={i}
-          style={{
-            height: `${Math.max(3, Math.min(18, 3 + Math.pow(v, 0.7) * 15))}px`,
-          }}
-        />
-      ))}
-    </div>
-  );
-
-  const cancelBtn = (
-    <button
-      className="sx"
-      aria-label="cancel"
-      onClick={() => commands.cancelOperation()}
-    >
-      <svg viewBox="0 0 16 16" aria-hidden="true">
-        <path
-          d="M4 4 L12 12 M12 4 L4 12"
-          stroke="currentColor"
-          strokeWidth="1.6"
-          strokeLinecap="round"
-        />
-      </svg>
-    </button>
-  );
-
-  // dot (left) | waveform (center) | timer + cancel (right) — same structure for
-  // pill & panel, so the Live morph is a pure width change.
-  const listeningRow = (showTimer: boolean, showCancel: boolean) => (
-    <div className="sbase">
-      <div className="sbase-l">
-        <span className={`sdot ${captureReady ? "ready" : "arming"}`} />
-      </div>
-      {waveform}
-      <div className="sbase-r">
-        {showTimer && <span className="stimer">{fmtTime(elapsed)}</span>}
-        {showCancel && cancelBtn}
-      </div>
-    </div>
-  );
-
-  // spinner (left) | label (center) | cancel (right) — same 3-zone grid as the
-  // listening row, so the label is centered.
-  const workingRow = (label: string, showCancel: boolean) => (
-    <div className="sbase">
-      <div className="sbase-l">
-        <span className="sspinner" />
-      </div>
-      <span className="swork-label">{label}</span>
-      <div className="sbase-r">{showCancel && cancelBtn}</div>
-    </div>
-  );
-
-  // ---- Live overlay: a pill that sculpts open into a panel ----
-  if (state === "streaming") {
-    const hasText =
-      streamText.committed.length > 0 || streamText.tentative.length > 0;
-    const working = phase === "working";
-    // Keep the panel open whenever there's text — even while finalizing — so the
-    // transcript stays put under a working spinner instead of collapsing and
-    // squishing the text mid-stream. Only fall back to the small working pill
-    // when there was no text to preserve.
-    const open = hasText;
-    const collapsed = working && !hasText;
-
-    return (
-      <div dir={direction} className={`ov-stage ${position}`}>
-        <div
-          key={session}
-          className={`scard ${open ? "open" : ""} ${collapsed ? "working" : ""} ${
-            isVisible ? "" : "leaving"
-          }`}
-        >
-          <div className="stext">
-            <div className="stext-clip">
-              <div
-                className={`stext-cap ${overflowing ? "overflowing" : ""}`}
-                ref={capRef}
-                onScroll={handleStreamScroll}
-              >
-                <p>
-                  <span className="committed">
-                    {streamText.committed ? streamText.committed + " " : ""}
-                  </span>
-                  <span className="tentative">{streamText.tentative}</span>
-                  {/* Drop the blinking caret once finalizing — it's no longer
-                      capturing, and a static spinner conveys the work. */}
-                  {!working && <span className="scaret" />}
-                </p>
-              </div>
-            </div>
-          </div>
-          {working
-            ? workingRow(
-                workKind === "polishing"
-                  ? t("overlay.processing")
-                  : t("overlay.transcribing"),
-                true,
-              )
-            : listeningRow(open, true)}
-        </div>
-      </div>
-    );
+    // One group carries the whole-mark fade, so overlapping parts (thumb
+    // behind palm) never show a brighter overlap.
+    group.setAttribute("opacity", f.mark.op.toFixed(3));
+    drawParts(f.mark).forEach((p, j) => {
+      const l = lineRefs.current[j];
+      if (!l) return;
+      l.setAttribute("x1", p.x1.toFixed(1));
+      l.setAttribute("y1", p.y1.toFixed(1));
+      l.setAttribute("x2", p.x2.toFixed(1));
+      l.setAttribute("y2", p.y2.toFixed(1));
+      l.setAttribute("stroke-width", p.width.toFixed(2));
+      l.setAttribute("opacity", p.op.toFixed(3));
+      l.style.stroke =
+        p.amber > 0
+          ? `color-mix(in srgb, var(--slip-amber) ${(p.amber * 100).toFixed(1)}%, var(--slip-ink))`
+          : "var(--slip-ink)";
+    });
+    const badge = badgeRef.current;
+    if (badge) {
+      const b = Math.max(0, Math.min(1, f.mark.badge));
+      badge.setAttribute("r", (BADGE.r * b).toFixed(1));
+      badge.setAttribute("opacity", f.mark.badge > 0 ? "1" : "0");
+    }
   }
 
-  // ---- Minimal overlay: exactly one row at a time — waveform (recording), or a
-  // spinner + label (transcribing / processing). Never both. The pill animates its
-  // width between them; the cancel button is in both rows so it stays put.
-  const working = state === "transcribing" || state === "processing";
-  const workLabel =
-    state === "processing"
-      ? t("overlay.processing")
-      : t("overlay.transcribing");
-
   return (
-    <div
-      dir={direction}
-      className={`ov-stage ${position} ov-fade ${isVisible ? "show" : ""}`}
-    >
-      <div
-        className={`scard compact ${working && isVisible ? "cworking" : ""}`}
-      >
-        {working ? workingRow(workLabel, true) : listeningRow(false, true)}
+    <div dir={direction} className={`ov-stage ${position}`}>
+      {mounted && (
+        <div className="slip" ref={cardRef}>
+          <svg
+            viewBox="205 215 610 610"
+            width={SLIP.glyph}
+            height={SLIP.glyph}
+            aria-hidden="true"
+          >
+            <g ref={groupRef}>
+              {[0, 1, 2, 3, 4, 5].map((j) => (
+                <line
+                  key={j}
+                  ref={(el) => {
+                    lineRefs.current[j] = el;
+                  }}
+                  strokeLinecap="round"
+                />
+              ))}
+            </g>
+            <circle
+              ref={badgeRef}
+              className="slip-badge"
+              cx={BADGE.cx}
+              cy={BADGE.cy}
+              r={0}
+              opacity={0}
+            />
+          </svg>
+          <div className="slip-clip" ref={clipRef}>
+            <div className="slip-flow" ref={flowRef}>
+              <span className="c">{text.committed}</span>{" "}
+              <span className="t" ref={tentRef}>
+                {text.tentative}
+              </span>
+            </div>
+          </div>
+          <span className="slip-msg" ref={msgRef}>
+            {reason ? t(MESSAGE_KEY[reason]) : ""}
+          </span>
+        </div>
+      )}
+      <div className="slip-measure" ref={measureRef} aria-hidden="true">
+        <span>{text.committed}</span> <span>{text.tentative}</span>
       </div>
+      <span
+        className="slip-measure-msg"
+        ref={measureMsgRef}
+        aria-hidden="true"
+      />
     </div>
   );
 };

@@ -18,7 +18,6 @@ import { ModelStateEvent, RecordingErrorEvent } from "./lib/types/events";
 import "./App.css";
 import AccessibilityPermissions from "./components/AccessibilityPermissions";
 import SecureInputWarning from "./components/SecureInputWarning";
-import Footer from "./components/footer";
 import Onboarding, { AccessibilityOnboarding } from "./components/onboarding";
 import {
   DebugSettings,
@@ -33,6 +32,10 @@ import { commands } from "@/bindings";
 import { getLanguageDirection, initializeRTL } from "@/lib/utils/rtl";
 
 type OnboardingStep = "accessibility" | "model" | "done";
+
+// Call pages and Memory keep their own wide layouts; every other page uses
+// the shared 680 px column.
+const FULL_WIDTH_SECTIONS = new Set<SidebarSection>(["calls", "memory"]);
 
 // Stable identity so preview effects do not re-run due to callback changes.
 const NOOP = () => {};
@@ -363,30 +366,40 @@ function App() {
     content = (
       <div
         dir={direction}
-        className="h-screen flex flex-col select-none cursor-default"
+        className="h-screen flex select-none cursor-default bg-background"
       >
         <ErrorBoundary context="What's New">
           <WhatsNewGate />
         </ErrorBoundary>
-        {/* Main content area that takes remaining space */}
-        <div className="flex-1 flex overflow-hidden">
-          <Sidebar
-            activeSection={currentSection}
-            onSectionChange={setCurrentSection}
-          />
-          {/* Scrollable content area */}
-          <div className="flex-1 flex flex-col overflow-hidden">
-            <div ref={settingsScrollRef} className="flex-1 overflow-y-auto">
-              <div className="flex flex-col items-center p-4 gap-4">
+        <Sidebar
+          activeSection={currentSection}
+          onSectionChange={setCurrentSection}
+        />
+        <div className="flex-1 min-w-0 flex flex-col">
+          {/* The window's top edge drags across its full width (the sidebar
+              has its own strip). Pages scroll below it, never underneath. */}
+          <div data-tauri-drag-region className="h-10 shrink-0" />
+          <main
+            ref={settingsScrollRef}
+            className={`flex-1 min-h-0 overflow-y-auto ${FULL_WIDTH_SECTIONS.has(currentSection) ? "" : "v-fade"}`}
+          >
+            {FULL_WIDTH_SECTIONS.has(currentSection) ? (
+              <div className="flex flex-col items-center px-4 pb-4 gap-4 min-h-full">
                 <AccessibilityPermissions />
                 <SecureInputWarning />
                 {renderSettingsContent(currentSection, setOnboardingPreview)}
               </div>
-            </div>
-          </div>
+            ) : (
+              <div className="v-col min-h-full">
+                <div className="flex flex-col gap-4 empty:hidden mb-6">
+                  <AccessibilityPermissions />
+                  <SecureInputWarning />
+                </div>
+                {renderSettingsContent(currentSection, setOnboardingPreview)}
+              </div>
+            )}
+          </main>
         </div>
-        {/* Fixed footer at bottom */}
-        <Footer />
       </div>
     );
   }
@@ -394,7 +407,19 @@ function App() {
   return (
     <>
       {toaster}
-      {content}
+      {onboardingPreview || onboardingStep !== "done" ? (
+        // Onboarding has no sidebar, which holds the main window's drag
+        // regions. Under the hidden title bar this top row is the only way to
+        // move the window; content scrolls below it, never underneath.
+        <div className="h-screen flex flex-col">
+          <div data-tauri-drag-region className="h-8 shrink-0" />
+          <div className="flex-1 min-h-0 overflow-y-auto [scrollbar-gutter:stable_both-edges] [&>.h-screen]:h-full">
+            {content}
+          </div>
+        </div>
+      ) : (
+        content
+      )}
     </>
   );
 }

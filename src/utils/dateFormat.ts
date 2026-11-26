@@ -125,3 +125,22 @@ export const formatRelativeTime = (
     return formatDateTime(timestamp, locale); // Fallback to absolute time
   }
 };
+
+/** "Today", "Yesterday", or a weekday and date such as "Friday, Nov 20". */
+export const dayLabel = (
+  date: Date,
+  t: (key: string) => string,
+  locale?: string,
+): string => {
+  const today = new Date();
+  const yesterday = new Date(today);
+  yesterday.setDate(today.getDate() - 1);
+  if (date.toDateString() === today.toDateString()) return t("calls.today");
+  if (date.toDateString() === yesterday.toDateString())
+    return t("calls.yesterday");
+  return date.toLocaleDateString(locale, {
+    weekday: "long",
+    month: "short",
+    day: "numeric",
+  });
+};

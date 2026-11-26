@@ -706,10 +706,6 @@
       "dark": "Koyu"
     }
   },
-  "overlay": {
-    "transcribing": "Transkribe ediliyor...",
-    "processing": "İşleniyor..."
-  },
   "whatsNew": {
     "title": "Voce v{{version}} yenilikleri"
   },

@@ -709,10 +709,6 @@
       "dark": "Mørk"
     }
   },
-  "overlay": {
-    "transcribing": "Transskriberer...",
-    "processing": "Behandler..."
-  },
   "secureInput": {
     "blockedWithCulprit_one": "{{name}} blokerer muligvis 1 genvej",
     "blockedWithCulprit_other": "{{name}} blokerer muligvis {{count}} genveje",

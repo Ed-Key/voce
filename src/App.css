@@ -1,7 +1,7 @@
 @import "tailwindcss";
 @import "./styles/theme.css";
+@import "./styles/voce.css";
 @import "@fontsource-variable/newsreader/opsz.css";
-@import "@fontsource-variable/manrope/index.css";
 @import "@fontsource/jetbrains-mono/400.css";
 @import "@fontsource/jetbrains-mono/500.css";
 
@@ -17,20 +17,30 @@
   --color-mid-gray: var(--color-mid-gray);
   --color-warning: var(--color-warning);
   --color-error: var(--color-error);
-}
-
-/* The main window takes the simulation's ground and text; the recording overlay keeps Handy's own. */
-:root,
-:root[data-theme] {
-  --color-background: var(--bg);
-  --color-text: var(--fg);
+  /* Voce tokens (src/styles/voce.css) */
+  --color-bg-side: var(--bg-side);
+  --color-surface: var(--surface);
+  --color-control: var(--control);
+  --color-hover: var(--hover);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-text-2: var(--text-2);
+  --color-text-3: var(--text-3);
+  --color-accent: var(--accent);
+  --color-accent-fill: var(--accent-fill);
+  --color-accent-wash: var(--accent-wash);
+  --color-danger: var(--danger);
+  --color-track: var(--track);
+  --font-sans: var(--font);
 }
 
 :root {
   /* Typography */
-  font-family: var(--font-body);
-  font-size: 15px;
-  line-height: 24px;
+  font-family: var(--font);
+  /* 16 px root keeps Tailwind's spacing on the 4 px grid the mockups use. */
+  font-size: 16px;
+  line-height: 22px;
+  font-feature-settings: "tnum" 1;
   font-weight: 400;
 
   /* Typography settings */
@@ -55,6 +65,23 @@
   /* Apply colors */
   color: var(--color-text);
   background-color: var(--color-background);
+}
+
+body {
+  font-size: 14px;
+}
+
+/* Long pages fade out at the window's bottom edge instead of being cut. */
+main.v-fade::after,
+main:has(.call-library)::after {
+  content: "";
+  display: block;
+  position: sticky;
+  bottom: 0;
+  height: 56px;
+  margin-top: -56px;
+  background: linear-gradient(transparent, var(--bg));
+  pointer-events: none;
 }
 
 .container {

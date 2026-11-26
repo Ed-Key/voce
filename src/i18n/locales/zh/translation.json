@@ -706,10 +706,6 @@
       "dark": "深色"
     }
   },
-  "overlay": {
-    "transcribing": "正在转录...",
-    "processing": "处理中..."
-  },
   "whatsNew": {
     "title": "Voce v{{version}} 新功能"
   },

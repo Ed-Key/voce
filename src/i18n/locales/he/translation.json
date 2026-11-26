@@ -706,10 +706,6 @@
       "dark": "כהה"
     }
   },
-  "overlay": {
-    "transcribing": "מתמלל...",
-    "processing": "מעבד..."
-  },
   "whatsNew": {
     "title": "חדש ב-Voce v{{version}}"
   },

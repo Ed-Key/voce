@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main-window",
+  "description": "The hidden title bar: the sidebar top drags the main window",
+  "windows": ["main"],
+  "permissions": ["core:window:allow-start-dragging"]
+}

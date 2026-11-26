@@ -1,7 +1,21 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { readFile } from "@tauri-apps/plugin-fs";
-import { Check, Copy, FolderOpen, RotateCcw, Star, Trash2 } from "lucide-react";
+import {
+  Check,
+  Copy,
+  FolderOpen,
+  RotateCcw,
+  Star,
+  Trash2,
+  VolumeOff,
+} from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import {
@@ -11,9 +25,10 @@ import {
   type HistoryUpdatePayload,
 } from "@/bindings";
 import { useOsType } from "@/hooks/useOsType";
-import { formatDateTime } from "@/utils/dateFormat";
+import { dayLabel } from "@/utils/dateFormat";
 import { AudioPlayer, AudioPlayerGroup } from "../../ui/AudioPlayer";
 import { Button } from "../../ui/Button";
+import { PageHeader } from "../../ui/PageHeader";
 import { copyToClipboard } from "./clipboard";
 
 const IconButton: React.FC<{
@@ -24,14 +39,12 @@ const IconButton: React.FC<{
   children: React.ReactNode;
 }> = ({ onClick, title, disabled, active, children }) => (
   <button
+    type="button"
     onClick={onClick}
     disabled={disabled}
-    className={`p-1.5 rounded-md flex items-center justify-center transition-colors cursor-pointer disabled:cursor-not-allowed disabled:text-text/20 ${
-      active
-        ? "text-logo-primary hover:text-logo-primary/80"
-        : "text-text/50 hover:text-logo-primary"
-    }`}
+    className={`v-ib ${active ? "v-star" : ""}`}
     title={title}
+    aria-label={title}
   >
     {children}
   </button>
@@ -39,29 +52,22 @@ const IconButton: React.FC<{
 
 const PAGE_SIZE = 30;
 
-interface OpenRecordingsButtonProps {
-  onClick: () => void;
-  label: string;
+/** Entries under their day ("Today", "Friday, Nov 20"), newest first. */
+function byDay(
+  entries: HistoryEntry[],
+  t: (key: string) => string,
+  locale: string,
+): [string, HistoryEntry[]][] {
+  const groups = new Map<string, HistoryEntry[]>();
+  for (const entry of entries) {
+    const day = dayLabel(new Date(entry.timestamp * 1000), t, locale);
+    groups.set(day, [...(groups.get(day) ?? []), entry]);
+  }
+  return [...groups];
 }
 
-const OpenRecordingsButton: React.FC<OpenRecordingsButtonProps> = ({
-  onClick,
-  label,
-}) => (
-  <Button
-    onClick={onClick}
-    variant="secondary"
-    size="sm"
-    className="flex items-center gap-2"
-    title={label}
-  >
-    <FolderOpen className="w-4 h-4" />
-    <span>{label}</span>
-  </Button>
-);
-
 export const HistorySettings: React.FC = () => {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const osType = useOsType();
   const [entries, setEntries] = useState<HistoryEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -231,33 +237,38 @@ export const HistorySettings: React.FC = () => {
 
   if (loading) {
     content = (
-      <div className="px-4 py-3 text-center text-text/60">
-        {t("settings.history.loading")}
+      <div className="v-group">
+        <p className="v-row v-meta">{t("settings.history.loading")}</p>
       </div>
     );
   } else if (entries.length === 0) {
     content = (
-      <div className="px-4 py-3 text-center text-text/60">
-        {t("settings.history.empty")}
+      <div className="v-group">
+        <p className="v-row v-meta">{t("settings.history.empty")}</p>
       </div>
     );
   } else {
     content = (
       <>
         <AudioPlayerGroup>
-          <div className="divide-y divide-mid-gray/20">
-            {entries.map((entry) => (
-              <HistoryEntryComponent
-                key={entry.id}
-                entry={entry}
-                onToggleSaved={() => toggleSaved(entry.id)}
-                onCopyText={() => copyToClipboard(entry.transcription_text)}
-                getAudioUrl={getAudioUrl}
-                deleteAudio={deleteAudioEntry}
-                retryTranscription={retryHistoryEntry}
-              />
-            ))}
-          </div>
+          {byDay(entries, t, i18n.language).map(([day, dayEntries]) => (
+            <section key={day}>
+              <h2 className="v-gl">{day}</h2>
+              <div className="v-group">
+                {dayEntries.map((entry) => (
+                  <HistoryEntryComponent
+                    key={entry.id}
+                    entry={entry}
+                    onToggleSaved={() => toggleSaved(entry.id)}
+                    onCopyText={() => copyToClipboard(entry.transcription_text)}
+                    getAudioUrl={getAudioUrl}
+                    deleteAudio={deleteAudioEntry}
+                    retryTranscription={retryHistoryEntry}
+                  />
+                ))}
+              </div>
+            </section>
+          ))}
         </AudioPlayerGroup>
         {/* Sentinel for infinite scroll */}
         <div ref={sentinelRef} className="h-1" />
@@ -266,23 +277,18 @@ export const HistorySettings: React.FC = () => {
   }
 
   return (
-    <div className="max-w-3xl w-full mx-auto space-y-6">
-      <div className="space-y-2">
-        <div className="px-4 flex items-center justify-between">
-          <div>
-            <h2 className="text-xs font-medium text-mid-gray uppercase tracking-wide">
-              {t("settings.history.title")}
-            </h2>
-          </div>
-          <OpenRecordingsButton
-            onClick={openRecordingsFolder}
-            label={t("settings.history.openFolder")}
-          />
-        </div>
-        <div className="bg-background border border-mid-gray/20 rounded-lg overflow-visible">
-          {content}
-        </div>
-      </div>
+    <div className="w-full">
+      <PageHeader
+        title={t("settings.history.title")}
+        info={t("settings.history.info")}
+        actions={
+          <Button variant="ghost" onClick={openRecordingsFolder}>
+            <FolderOpen width={15} height={15} />
+            {t("settings.history.openFolder")}
+          </Button>
+        }
+      />
+      {content}
     </div>
   );
 };
@@ -307,13 +313,33 @@ const HistoryEntryComponent: React.FC<HistoryEntryProps> = ({
   const { t, i18n } = useTranslation();
   const [showCopied, setShowCopied] = useState(false);
   const [retrying, setRetrying] = useState(false);
+  // undefined while checking, null when the audio has expired.
+  const [audioUrl, setAudioUrl] = useState<string | null | undefined>();
+  const [expanded, setExpanded] = useState(false);
+  const [clamped, setClamped] = useState(false);
+  const textRef = useRef<HTMLParagraphElement>(null);
 
   const hasTranscription = entry.transcription_text.trim().length > 0;
+  const audioExpired = audioUrl === null;
 
-  const handleLoadAudio = useCallback(
-    () => getAudioUrl(entry.file_name),
-    [getAudioUrl, entry.file_name],
-  );
+  // Retention deletes old audio but keeps the text; the path lookup fails
+  // for a missing file, which is how an entry learns its audio is gone.
+  // ponytail: one lookup per entry on mount; a backend flag on HistoryEntry
+  // would save these calls if pages ever grow far past 30 entries.
+  useEffect(() => {
+    let cancelled = false;
+    void getAudioUrl(entry.file_name).then((url) => {
+      if (!cancelled) setAudioUrl(url);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [getAudioUrl, entry.file_name]);
+
+  useLayoutEffect(() => {
+    const el = textRef.current;
+    if (el && !expanded) setClamped(el.scrollHeight > el.clientHeight + 1);
+  }, [entry.transcription_text, expanded]);
 
   const handleCopyText = async () => {
     if (!hasTranscription) {
@@ -351,22 +377,31 @@ const HistoryEntryComponent: React.FC<HistoryEntryProps> = ({
     }
   };
 
-  const formattedDate = formatDateTime(String(entry.timestamp), i18n.language);
+  const toggleExpanded = () => {
+    // Selecting text to copy part of it should not fold the entry.
+    if (window.getSelection()?.toString()) return;
+    if (clamped || expanded) setExpanded((value) => !value);
+  };
+
+  const time = new Date(entry.timestamp * 1000).toLocaleTimeString(
+    i18n.language,
+    { hour: "numeric", minute: "2-digit" },
+  );
 
   return (
-    <div className="px-4 py-2 pb-5 flex flex-col gap-3">
-      <div className="flex justify-between items-center">
-        <p className="text-sm font-medium">{formattedDate}</p>
-        <div className="flex items-center">
+    <div className="px-3.5 pt-3 pb-3.5">
+      <div className="flex items-center justify-between h-7 mb-1">
+        <span className="v-meta">{time}</span>
+        <div className="flex items-center gap-0.5 -me-1.5">
           <IconButton
             onClick={handleCopyText}
             disabled={!hasTranscription || retrying}
             title={t("settings.history.copyToClipboard")}
           >
             {showCopied ? (
-              <Check width={16} height={16} />
+              <Check width={15} height={15} strokeWidth={1.6} />
             ) : (
-              <Copy width={16} height={16} />
+              <Copy width={15} height={15} strokeWidth={1.6} />
             )}
           </IconButton>
           <IconButton
@@ -380,43 +415,54 @@ const HistoryEntryComponent: React.FC<HistoryEntryProps> = ({
             }
           >
             <Star
-              width={16}
-              height={16}
+              width={15}
+              height={15}
+              strokeWidth={1.6}
               fill={entry.saved ? "currentColor" : "none"}
             />
           </IconButton>
-          <IconButton
-            onClick={handleRetranscribe}
-            disabled={retrying}
-            title={t("settings.history.retranscribe")}
-          >
-            <RotateCcw
-              width={16}
-              height={16}
-              style={
-                retrying
-                  ? { animation: "spin 1s linear infinite reverse" }
-                  : undefined
-              }
-            />
-          </IconButton>
+          {!audioExpired && (
+            <IconButton
+              onClick={handleRetranscribe}
+              disabled={retrying}
+              title={t("settings.history.retranscribe")}
+            >
+              <RotateCcw
+                width={15}
+                height={15}
+                strokeWidth={1.6}
+                style={
+                  retrying
+                    ? { animation: "spin 1s linear infinite reverse" }
+                    : undefined
+                }
+              />
+            </IconButton>
+          )}
           <IconButton
             onClick={handleDeleteEntry}
             disabled={retrying}
             title={t("settings.history.delete")}
           >
-            <Trash2 width={16} height={16} />
+            <Trash2 width={15} height={15} strokeWidth={1.6} />
           </IconButton>
         </div>
       </div>
 
       <p
-        className={`italic text-sm pb-2 ${
+        ref={textRef}
+        onClick={toggleExpanded}
+        title={
+          clamped && !expanded ? t("settings.history.showMore") : undefined
+        }
+        className={`text-sm leading-[22px] text-pretty ${
+          expanded ? "" : "line-clamp-3"
+        } ${clamped || expanded ? "cursor-pointer" : ""} ${
           retrying
             ? ""
             : hasTranscription
-              ? "text-text/90 select-text cursor-text whitespace-pre-wrap break-words"
-              : "text-text/40"
+              ? "text-text select-text whitespace-pre-wrap break-words"
+              : "text-text-3"
         }`}
         style={
           retrying
@@ -439,7 +485,16 @@ const HistoryEntryComponent: React.FC<HistoryEntryProps> = ({
             : t("settings.history.transcriptionFailed")}
       </p>
 
-      <AudioPlayer onLoadRequest={handleLoadAudio} className="w-full" />
+      {audioExpired ? (
+        <div className="flex items-center gap-[7px] mt-3 h-6 v-meta">
+          <VolumeOff width={14} height={14} strokeWidth={1.6} />
+          {t("settings.history.audioExpired")}
+        </div>
+      ) : audioUrl ? (
+        <AudioPlayer src={audioUrl} className="w-full mt-3" />
+      ) : (
+        <div className="mt-3 h-6" />
+      )}
     </div>
   );
 };

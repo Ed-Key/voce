@@ -35,9 +35,7 @@ export const Slider: React.FC<SliderProps> = ({
   onReset,
   isResetting = false,
 }) => {
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    onChange(parseFloat(e.target.value));
-  };
+  const fill = ((value - min) / (max - min)) * 100;
 
   return (
     <SettingContainer
@@ -48,35 +46,22 @@ export const Slider: React.FC<SliderProps> = ({
       layout="horizontal"
       disabled={disabled}
     >
-      <div className="w-full">
-        <div className="flex items-center space-x-1 h-6">
-          <input
-            type="range"
-            min={min}
-            max={max}
-            step={step}
-            value={value}
-            onChange={handleChange}
-            disabled={disabled}
-            className="flex-grow h-2 rounded-lg appearance-none cursor-pointer focus:outline-none focus:ring-2 focus:ring-logo-primary disabled:opacity-50 disabled:cursor-not-allowed"
-            style={{
-              background: `linear-gradient(to right, var(--color-background-ui) ${
-                ((value - min) / (max - min)) * 100
-              }%, rgba(128, 128, 128, 0.2) ${
-                ((value - min) / (max - min)) * 100
-              }%)`,
-            }}
-          />
-          {showValue && (
-            <span className="text-sm font-medium text-text/90 w-12 text-end">
-              {formatValue(value)}
-            </span>
-          )}
-          {onReset && (
-            <ResetButton onClick={onReset} disabled={disabled || isResetting} />
-          )}
-        </div>
-      </div>
+      {onReset && (
+        <ResetButton onClick={onReset} disabled={disabled || isResetting} />
+      )}
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        onChange={(e) => onChange(parseFloat(e.target.value))}
+        disabled={disabled}
+        aria-label={label}
+        className="v-slider"
+        style={{ "--fill": `${fill}%` } as React.CSSProperties}
+      />
+      {showValue && <span className="v-val">{formatValue(value)}</span>}
     </SettingContainer>
   );
 };

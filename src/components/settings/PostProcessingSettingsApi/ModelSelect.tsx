@@ -24,7 +24,7 @@ export const ModelSelect: React.FC<ModelSelectProps> = React.memo(
     onSelect,
     onCreate,
     onBlur,
-    className = "flex-1 min-w-[360px]",
+    className = "w-[260px]",
   }) => {
     const handleCreate = (inputValue: string) => {
       const trimmed = inputValue.trim();
@@ -32,7 +32,7 @@ export const ModelSelect: React.FC<ModelSelectProps> = React.memo(
       onCreate(trimmed);
     };
 
-    const computedClassName = `text-sm ${className}`;
+    const computedClassName = className;
 
     return (
       <Select

@@ -1,0 +1,544 @@
+/* Voce design tokens for the main window. Dark is the default; light is a
+   readability-checked fallback. One accent (iris); amber only in brand marks.
+   Imported by App.css only, so the overlay and notch keep their own palettes. */
+
+@font-face {
+  font-family: "Figtree";
+  src: url("../notch/Figtree.ttf") format("truetype");
+  font-weight: 300 900;
+  font-display: swap;
+}
+
+:root,
+:root[data-theme="dark"] {
+  --bg: #121117;
+  --bg-side: #0e0d13;
+  --surface: #191820;
+  --control: #23222c;
+  --hover: #1f1e27;
+  --line: rgba(246, 242, 233, 0.07);
+  --line-strong: rgba(246, 242, 233, 0.13);
+
+  --text: #f1ede4;
+  --text-2: #a8a5b3;
+  --text-3: #77748a;
+
+  --accent: #a5a2ff;
+  --accent-fill: #5f5bd6;
+  --accent-wash: rgba(143, 140, 255, 0.11);
+  --on-accent: #ffffff;
+
+  --danger: #f0857a;
+  --track: #34333f;
+  --knob: #f6f2e9;
+  --mark: #f6f2e9;
+  --shadow: rgba(0, 0, 0, 0.4);
+}
+
+/* "System" theme leaves data-theme unset and follows the OS. */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    --bg: #f7f5f0;
+    --bg-side: #efece5;
+    --surface: #ffffff;
+    --control: #ffffff;
+    --hover: #e6e2d9;
+    --line: rgba(27, 26, 46, 0.09);
+    --line-strong: rgba(27, 26, 46, 0.2);
+    --text: #1b1a2e;
+    --text-2: #55536a;
+    --text-3: #76748a;
+    --accent: #3a36a0;
+    --accent-fill: #3a36a0;
+    --accent-wash: rgba(58, 54, 160, 0.08);
+    --danger: #b93a30;
+    --track: #cfcbc1;
+    --knob: #ffffff;
+    --mark: #2f2b8c;
+    --shadow: rgba(27, 26, 46, 0.14);
+  }
+}
+
+:root[data-theme="light"] {
+  --bg: #f7f5f0;
+  --bg-side: #efece5;
+  --surface: #ffffff;
+  --control: #ffffff;
+  --hover: #e6e2d9;
+  --line: rgba(27, 26, 46, 0.09);
+  --line-strong: rgba(27, 26, 46, 0.2);
+  --text: #1b1a2e;
+  --text-2: #55536a;
+  --text-3: #76748a;
+  --accent: #3a36a0;
+  --accent-fill: #3a36a0;
+  --accent-wash: rgba(58, 54, 160, 0.08);
+  --danger: #b93a30;
+  --track: #cfcbc1;
+  --knob: #ffffff;
+  --mark: #2f2b8c;
+  --shadow: rgba(27, 26, 46, 0.14);
+}
+
+:root,
+:root[data-theme] {
+  --font: "Figtree", -apple-system, BlinkMacSystemFont, sans-serif;
+  /* Older surfaces read these names; they now resolve to the Voce set. */
+  --font-body: var(--font);
+  --color-background: var(--bg);
+  --color-text: var(--text);
+  --color-mid-gray: var(--text-3);
+  --color-logo-primary: var(--accent);
+  --color-background-ui: var(--accent-fill);
+  --color-error: var(--danger);
+  --panel: var(--surface);
+  --raise: var(--hover);
+  --fg: var(--text);
+  --mute: var(--text-2);
+  --faint: var(--text-3);
+}
+
+/* ---- Voce components (mirrors the approved mockup's markup) ---- */
+/* In the components layer so Tailwind utilities can still override them. */
+@layer components {
+  .v-col {
+    width: 680px;
+    max-width: 100%;
+    margin: 0 auto;
+    /* The 40px drag row above the scroller stands in for the top padding. */
+    padding: 0 0 40px;
+  }
+  .v-ph {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 32px;
+    margin-bottom: 24px;
+  }
+  .v-ph h1 {
+    font: 640 22px/28px var(--font);
+    letter-spacing: -0.012em;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 0;
+  }
+  .v-ph .v-count {
+    font: 500 14px/20px var(--font);
+    color: var(--text-3);
+    letter-spacing: 0;
+    padding-top: 4px;
+  }
+  .v-pa {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .v-gl {
+    font: 600 12px/16px var(--font);
+    color: var(--text-3);
+    margin: 0 0 8px 14px;
+    letter-spacing: 0.01em;
+  }
+  .v-group {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    margin-bottom: 24px;
+  }
+  .v-group > * + * {
+    border-top: 1px solid var(--line);
+  }
+  .v-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    min-height: 46px;
+    padding: 0 14px;
+  }
+  .v-row.v-stack {
+    display: block;
+    padding: 12px 14px 14px;
+  }
+  .v-row.v-stack > .v-lbl {
+    margin-bottom: 8px;
+  }
+  .v-lbl {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font: 500 14px/20px var(--font);
+    min-width: 0;
+  }
+  .v-ctl {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    position: relative;
+  }
+  .v-row.v-off .v-lbl,
+  .v-row.v-off .v-ctl {
+    opacity: 0.42;
+  }
+  .v-i {
+    color: var(--text-3);
+    opacity: 0.75;
+    display: inline-flex;
+    position: relative;
+    cursor: help;
+    background: none;
+    border: 0;
+    padding: 0;
+  }
+  .v-i:hover,
+  .v-i.v-open {
+    opacity: 1;
+    color: var(--text-2);
+  }
+  .v-i.v-hi {
+    opacity: 1;
+  }
+  .v-pop {
+    padding: 12px 14px;
+    border-radius: 10px;
+    background: var(--control);
+    border: 1px solid var(--line-strong);
+    box-shadow: 0 12px 32px var(--shadow);
+    font: 400 12.5px/18px var(--font);
+    color: var(--text-2);
+    letter-spacing: 0;
+    text-align: left;
+  }
+  .v-pop b {
+    display: block;
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: 3px;
+  }
+  .v-sel,
+  .v-field {
+    height: 30px;
+    width: 208px;
+    padding: 0 9px 0 11px;
+    border-radius: 8px;
+    background: var(--control);
+    border: 1px solid var(--line-strong);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    font: 500 13.5px/18px var(--font);
+    color: var(--text);
+    white-space: nowrap;
+    text-align: left;
+    transition: border-color 120ms;
+  }
+  .v-sel:not(:disabled):hover,
+  .v-field:not(:disabled):hover {
+    border-color: color-mix(in srgb, var(--accent) 45%, var(--line-strong));
+  }
+  .v-sel:focus-visible,
+  .v-field:focus,
+  .v-field:focus-within {
+    outline: none;
+    border-color: var(--accent);
+  }
+  .v-sel > span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .v-sel .v-chev {
+    color: var(--text-2);
+    flex: none;
+  }
+  .v-field::placeholder,
+  .v-field input::placeholder,
+  .v-field textarea::placeholder {
+    color: var(--text-3);
+    font-weight: 400;
+  }
+  .v-field:disabled {
+    opacity: 0.6;
+  }
+  .v-menu {
+    position: absolute;
+    top: calc(100% + 4px);
+    z-index: 50;
+    max-height: 240px;
+    overflow-y: auto;
+    padding: 4px;
+    border-radius: 10px;
+    background: var(--control);
+    border: 1px solid var(--line-strong);
+    box-shadow: 0 12px 32px var(--shadow);
+  }
+  .v-menu button {
+    display: block;
+    width: 100%;
+    text-align: left;
+    padding: 6px 9px;
+    border-radius: 6px;
+    font: 500 13.5px/18px var(--font);
+    color: var(--text);
+  }
+  .v-menu button:not(:disabled):hover {
+    background: var(--hover);
+  }
+  .v-menu button.v-on {
+    color: var(--accent);
+  }
+  .v-menu button:disabled {
+    opacity: 0.5;
+  }
+  .v-menu button small {
+    display: block;
+    font: 400 12px/16px var(--font);
+    color: var(--text-3);
+    margin-top: 1px;
+  }
+  .v-keys {
+    display: flex;
+    gap: 4px;
+    cursor: pointer;
+  }
+  .v-keys kbd {
+    font: 500 12.5px/1 var(--font);
+    height: 26px;
+    min-width: 26px;
+    padding: 0 8px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+    background: var(--control);
+    border: 1px solid var(--line-strong);
+    color: var(--text);
+  }
+  .v-keys:hover kbd {
+    border-color: color-mix(in srgb, var(--accent) 45%, var(--line-strong));
+  }
+  .v-keys.v-rec kbd {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .v-ib {
+    width: 28px;
+    height: 28px;
+    border-radius: 7px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-3);
+    flex: none;
+    background: none;
+    border: 0;
+    cursor: pointer;
+    transition:
+      color 120ms,
+      background 120ms;
+  }
+  .v-ib:not(:disabled):hover {
+    color: var(--text);
+    background: var(--hover);
+  }
+  .v-ib:disabled {
+    opacity: 0.45;
+    cursor: default;
+  }
+  .v-ib.v-boxed {
+    width: 30px;
+    height: 30px;
+    border-radius: 8px;
+    background: var(--control);
+    border: 1px solid var(--line-strong);
+    color: var(--text-2);
+  }
+  .v-ib.v-boxed[aria-pressed="true"] {
+    color: var(--accent);
+    border-color: var(--accent);
+    background: var(--accent-wash);
+  }
+  .v-ib.v-star {
+    color: var(--accent);
+  }
+  .v-tog {
+    width: 36px;
+    height: 20px;
+    border-radius: 999px;
+    background: var(--track);
+    position: relative;
+    flex: none;
+    border: 0;
+    padding: 0;
+    cursor: pointer;
+    transition: background 150ms;
+  }
+  .v-tog b {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--knob);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+    transition: left 150ms;
+  }
+  .v-tog[aria-checked="true"] {
+    background: var(--accent-fill);
+  }
+  .v-tog[aria-checked="true"] b {
+    left: 18px;
+    background: #fff;
+  }
+  .v-tog:disabled {
+    cursor: default;
+  }
+  .v-tog:focus-visible,
+  .v-btn:focus-visible,
+  .v-ib:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  .v-slider {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 150px;
+    height: 4px;
+    border-radius: 2px;
+    background: linear-gradient(
+      to right,
+      var(--accent) var(--fill, 0%),
+      var(--track) var(--fill, 0%)
+    );
+    cursor: pointer;
+    outline: none;
+  }
+  .v-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--knob);
+    border: 1px solid var(--line-strong);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+  }
+  .v-val {
+    font: 500 13.5px/18px var(--font);
+    width: 42px;
+    text-align: right;
+  }
+  .v-btn {
+    height: 30px;
+    padding: 0 12px;
+    border-radius: 8px;
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    font: 550 13.5px/1 var(--font);
+    white-space: nowrap;
+    border: 1px solid transparent;
+    cursor: pointer;
+    transition:
+      background 120ms,
+      color 120ms,
+      opacity 120ms;
+  }
+  .v-btn.v-primary {
+    background: var(--accent-fill);
+    color: var(--on-accent);
+  }
+  .v-btn.v-primary:not(:disabled):hover {
+    background: color-mix(in srgb, var(--accent-fill) 88%, white);
+  }
+  .v-btn.v-secondary {
+    background: var(--control);
+    border-color: var(--line-strong);
+    color: var(--text);
+  }
+  .v-btn.v-secondary:not(:disabled):hover {
+    background: var(--hover);
+  }
+  .v-btn.v-ghost {
+    color: var(--text-2);
+    padding: 0 8px;
+  }
+  .v-btn.v-ghost:not(:disabled):hover {
+    color: var(--text);
+    background: var(--hover);
+  }
+  .v-btn.v-danger {
+    color: var(--danger);
+  }
+  .v-btn.v-danger:not(:disabled):hover {
+    color: var(--danger);
+    background: color-mix(in srgb, var(--danger) 10%, transparent);
+  }
+  .v-btn:disabled {
+    opacity: 0.45;
+    cursor: default;
+  }
+  .v-meta {
+    font: 400 12px/16px var(--font);
+    color: var(--text-3);
+  }
+  .v-chip {
+    height: 24px;
+    padding: 0 7px 0 9px;
+    border-radius: 6px;
+    background: var(--control);
+    border: 1px solid var(--line);
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font: 500 12.5px/1 var(--font);
+    color: var(--text);
+    cursor: pointer;
+  }
+  .v-chip svg {
+    color: var(--text-3);
+  }
+  .v-chip:hover svg {
+    color: var(--text);
+  }
+  .v-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--accent);
+    flex: none;
+  }
+  /* The searchable select keeps its clear button, shown only on hover. */
+  .app-select__control:not(:hover):not(.app-select__control--is-focused)
+    .app-select__clear-indicator {
+    opacity: 0;
+  }
+  /* Audio scrubber: a plain 3 px rail; the knob shows on hover. */
+  .v-rail {
+    -webkit-appearance: none;
+    appearance: none;
+    height: 3px;
+    border-radius: 2px;
+    background: linear-gradient(
+      to right,
+      var(--accent) var(--fill, 0%),
+      var(--track) var(--fill, 0%)
+    );
+    cursor: pointer;
+    outline: none;
+  }
+  .v-rail::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--knob);
+    opacity: 0;
+    transition: opacity 120ms;
+  }
+  .v-rail:hover::-webkit-slider-thumb,
+  .v-rail:focus-visible::-webkit-slider-thumb {
+    opacity: 1;
+  }
+}

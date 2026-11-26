@@ -10,6 +10,10 @@ import { ChevronLeft, Info, Mic, Sparkles, Square, Trash2 } from "lucide-react";
 import { CallObservatory } from "./CallObservatory";
 import { TerraMenu } from "./TerraMenu";
 import { ToggleSwitch } from "../ui/ToggleSwitch";
+import { PageHeader } from "../ui/PageHeader";
+import { Button } from "../ui/Button";
+import { humanDuration } from "./duration";
+import { dayLabel } from "@/utils/dateFormat";
 import { useSettings } from "../../hooks/useSettings";
 import {
   clock as replayClock,
@@ -88,20 +92,7 @@ const processing = (status?: string) =>
 
 /** Calls under their day, newest first as they already are. */
 function days(calls: CallSession[], t: (key: string) => string) {
-  const label = (value: CallSession) => {
-    const day = new Date(value.started_at);
-    const today = new Date();
-    const yesterday = new Date(today);
-    yesterday.setDate(today.getDate() - 1);
-    if (day.toDateString() === today.toDateString()) return t("calls.today");
-    if (day.toDateString() === yesterday.toDateString())
-      return t("calls.yesterday");
-    return day.toLocaleDateString(undefined, {
-      weekday: "long",
-      month: "short",
-      day: "numeric",
-    });
-  };
+  const label = (value: CallSession) => dayLabel(new Date(value.started_at), t);
   const groups = new Map<string, CallSession[]>();
   for (const call of calls)
     groups.set(label(call), [...(groups.get(label(call)) ?? []), call]);
@@ -516,16 +507,6 @@ export function CallNotes() {
     value.detected_app
       ? t(`calls.apps.${value.detected_app}`)
       : t("calls.localCall");
-  const start = (
-    <button
-      className="icon-btn ask"
-      disabled={busy || live?.active || detection?.dictating}
-      onClick={() => void action("start_call_notes")}
-    >
-      <Mic />
-      {t("calls.start")}
-    </button>
-  );
   const toggleAssistie = (value: CallSession) => {
     if (assistieCall === value.id && callAssistieOpen) {
       setCallAssistieOpen(false);
@@ -585,92 +566,105 @@ export function CallNotes() {
     />
   );
   return (
-    <section className="call-notepad">
+    <section className={session ? "call-notepad" : "call-notepad call-library"}>
       {!session ? (
         <>
-          <div className="obs">
-            <header className="top">
-              <h1>{t("calls.library")}</h1>
-              {!!calls.length && <span className="pill">{calls.length}</span>}
-              <div className="tools end">
-                {!showAssistieFixture && start}
-                <CallInfo label={t("calls.about")}>
-                  <p>{t("calls.libraryHint")}</p>
-                  <p>{t("calls.retentionPolicy")}</p>
-                  <ToggleSwitch
-                    checked={getSetting("call_invitations_enabled") ?? true}
-                    onChange={(next) =>
-                      void updateSetting("call_invitations_enabled", next)
-                    }
-                    isUpdating={isUpdating("call_invitations_enabled")}
-                    label={t("calls.invitation.enabledLabel")}
-                    description={t("calls.invitation.enabledDescription")}
-                    descriptionMode="inline"
-                  />
-                  <p>{t("calls.detectionScope")}</p>
-                  <AssistiePlugin />
-                  <div className="call-info-actions">
-                    <button
-                      disabled={busy || !!live?.active}
-                      onClick={() => {
-                        void invoke("preview_call_invitation").catch(
-                          (failure) => setError(String(failure)),
-                        );
-                      }}
-                    >
-                      {t("calls.invitation.preview")}
-                    </button>
-                    <button
-                      disabled={busy || !!live?.active}
-                      onClick={() => {
-                        if (showAssistieFixture) {
-                          setShowAssistieFixture(false);
-                          return;
-                        }
-                        setBusy(true);
-                        void invoke<AssistieSnapshot>("create_assistie_fixture")
-                          .then((value) => {
-                            setAssistieRun(value.run_id);
-                            setAssistieCall(null);
-                            setAssistieArchive(false);
-                            setCallAssistieOpen(false);
-                            setShowAssistieFixture(true);
-                            setError("");
-                          })
-                          .catch((failure) => setError(String(failure)))
-                          .finally(() => setBusy(false));
-                      }}
-                    >
-                      {t(
-                        showAssistieFixture
-                          ? "calls.assistie.close"
-                          : "calls.assistie.fixture",
-                      )}
-                    </button>
-                  </div>
-                </CallInfo>
-              </div>
-            </header>
-            {detection?.available && !!detection.apps.length && (
-              <div className="status" aria-live="polite">
-                <span className="dot" />
-                <span>
-                  {t("calls.detected", {
-                    apps: detection.apps
-                      .map((a) => t(`calls.apps.${a}`))
-                      .join(", "),
-                  })}
-                </span>
-              </div>
-            )}
-          </div>
+          <PageHeader
+            title={t("calls.library")}
+            count={calls.length || undefined}
+            actions={
+              <>
+                {!showAssistieFixture && (
+                  <Button
+                    disabled={busy || live?.active || detection?.dictating}
+                    onClick={() => void action("start_call_notes")}
+                  >
+                    <Mic width={15} height={15} />
+                    {t("calls.start")}
+                  </Button>
+                )}
+                {/* .obs styles the popover contents as on the call page. */}
+                <div className="obs">
+                  <CallInfo label={t("calls.about")}>
+                    <p>{t("calls.libraryHint")}</p>
+                    <p>{t("calls.retentionPolicy")}</p>
+                    <ToggleSwitch
+                      checked={getSetting("call_invitations_enabled") ?? true}
+                      onChange={(next) =>
+                        void updateSetting("call_invitations_enabled", next)
+                      }
+                      isUpdating={isUpdating("call_invitations_enabled")}
+                      label={t("calls.invitation.enabledLabel")}
+                      description={t("calls.invitation.enabledDescription")}
+                      descriptionMode="inline"
+                    />
+                    <p>{t("calls.detectionScope")}</p>
+                    <AssistiePlugin />
+                    <div className="call-info-actions">
+                      <button
+                        disabled={busy || !!live?.active}
+                        onClick={() => {
+                          void invoke("preview_call_invitation").catch(
+                            (failure) => setError(String(failure)),
+                          );
+                        }}
+                      >
+                        {t("calls.invitation.preview")}
+                      </button>
+                      <button
+                        disabled={busy || !!live?.active}
+                        onClick={() => {
+                          if (showAssistieFixture) {
+                            setShowAssistieFixture(false);
+                            return;
+                          }
+                          setBusy(true);
+                          void invoke<AssistieSnapshot>(
+                            "create_assistie_fixture",
+                          )
+                            .then((value) => {
+                              setAssistieRun(value.run_id);
+                              setAssistieCall(null);
+                              setAssistieArchive(false);
+                              setCallAssistieOpen(false);
+                              setShowAssistieFixture(true);
+                              setError("");
+                            })
+                            .catch((failure) => setError(String(failure)))
+                            .finally(() => setBusy(false));
+                        }}
+                      >
+                        {t(
+                          showAssistieFixture
+                            ? "calls.assistie.close"
+                            : "calls.assistie.fixture",
+                        )}
+                      </button>
+                    </div>
+                  </CallInfo>
+                </div>
+              </>
+            }
+          />
+          {detection?.available && !!detection.apps.length && (
+            <div className="call-library-status" aria-live="polite">
+              <span className="v-dot" />
+              <span>
+                {t("calls.detected", {
+                  apps: detection.apps
+                    .map((a) => t(`calls.apps.${a}`))
+                    .join(", "),
+                })}
+              </span>
+            </div>
+          )}
           {showAssistieFixture ? (
             assistiePanel
           ) : calls.length ? (
-            <div className="call-list">
-              {days(calls, t).map(([day, calls]) => (
-                <React.Fragment key={day}>
-                  <h3>{day}</h3>
+            days(calls, t).map(([day, calls]) => (
+              <section key={day}>
+                <h2 className="v-gl">{day}</h2>
+                <div className="v-group">
                   {calls.map((value) => (
                     <div
                       className="call-row"
@@ -692,11 +686,14 @@ export function CallNotes() {
                             ? value.title
                             : app(value)}
                         </span>
-                        <small>
+                        <span className="v-meta">
+                          {value.active ? t("calls.recording") : time(value)}
+                        </span>
+                        <span className="call-row-length">
                           {value.active
-                            ? t("calls.recording")
-                            : `${time(value)} · ${clock(value.elapsed_ms)}`}
-                        </small>
+                            ? clock(value.elapsed_ms)
+                            : humanDuration(value.elapsed_ms, t)}
+                        </span>
                       </button>
                       {!value.active && (
                         <button
@@ -725,9 +722,9 @@ export function CallNotes() {
                       )}
                     </div>
                   ))}
-                </React.Fragment>
-              ))}
-            </div>
+                </div>
+              </section>
+            ))
           ) : (
             <p className="call-empty">{t("calls.noSaved")}</p>
           )}

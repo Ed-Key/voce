@@ -709,10 +709,6 @@
       "dark": "अँध्यारो"
     }
   },
-  "overlay": {
-    "transcribing": "ट्रान्सक्राइब गरिँदैछ...",
-    "processing": "प्रशोधन गरिँदैछ..."
-  },
   "secureInput": {
     "blockedWithCulprit_one": "{{name}} ले 1 सर्टकट रोकिरहेको हुन सक्छ",
     "blockedWithCulprit_other": "{{name}} ले {{count}} सर्टकटहरू रोकिरहेको हुन सक्छ",

@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Slip overlay preview</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        overflow: hidden;
+      }
+      /* Same strip, wallpapers and dock as the motion playground, so frames
+         can be compared side by side at the same pixels. */
+      .strip {
+        position: relative;
+        width: 520px;
+        height: 250px;
+        overflow: hidden;
+      }
+      .wall {
+        position: absolute;
+        inset: 0;
+      }
+      .strip.light .wall {
+        background:
+          radial-gradient(520px 260px at 18% 110%, #f7c9a8 0, transparent 70%),
+          radial-gradient(480px 300px at 85% -20%, #b9d4f2 0, transparent 70%),
+          linear-gradient(160deg, #dfe9f5, #f1e6dc);
+      }
+      .strip.dark .wall {
+        background:
+          radial-gradient(520px 260px at 80% 120%, #4a2a6b 0, transparent 70%),
+          radial-gradient(520px 320px at 10% -30%, #1d3f73 0, transparent 70%),
+          linear-gradient(160deg, #101426, #1a1230);
+      }
+      .dock {
+        position: absolute;
+        bottom: 5px;
+        left: 50%;
+        transform: translateX(-50%);
+        height: 42px;
+        padding: 0 6px;
+        border-radius: 13px;
+        display: flex;
+        gap: 6px;
+        align-items: center;
+        background: rgba(255, 255, 255, 0.22);
+        border: 1px solid rgba(255, 255, 255, 0.22);
+      }
+      .strip.light .dock {
+        background: rgba(255, 255, 255, 0.45);
+        border-color: rgba(255, 255, 255, 0.6);
+      }
+      .dock i {
+        width: 30px;
+        height: 30px;
+        border-radius: 7.5px;
+        flex: none;
+      }
+      /* The overlay window: the transform makes it the containing block of the
+         overlay's position: fixed stage, as the real window is. Its bottom sits
+         48 px up (the playground card's 63 px less the 15 px shadow pad), or at
+         the top edge for top placement. */
+      #window {
+        position: absolute;
+        left: 50%;
+        bottom: 48px;
+        transform: translateX(-50%);
+      }
+      #window.top {
+        top: 0;
+        bottom: auto;
+      }
+      #window.outline {
+        outline: 1px dashed rgba(255, 0, 0, 0.6);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="strip dark" id="strip">
+      <div class="wall"></div>
+      <div class="dock" id="dock"></div>
+      <div id="window"><div id="root"></div></div>
+    </div>
+    <script type="module" src="./preview.tsx"></script>
+  </body>
+</html>

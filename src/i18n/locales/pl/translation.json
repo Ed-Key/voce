@@ -706,10 +706,6 @@
       "dark": "Ciemny"
     }
   },
-  "overlay": {
-    "transcribing": "Transkrypcja...",
-    "processing": "Przetwarzanie..."
-  },
   "whatsNew": {
     "title": "Nowości w Voce v{{version}}"
   },

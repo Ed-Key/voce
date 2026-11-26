@@ -706,10 +706,6 @@
       "dark": "Mörkt"
     }
   },
-  "overlay": {
-    "transcribing": "Transkriberar...",
-    "processing": "Bearbetar..."
-  },
   "whatsNew": {
     "title": "Nytt i Voce v{{version}}"
   },

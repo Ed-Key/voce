@@ -6,6 +6,7 @@ import {
   normalizeKey,
 } from "../../lib/utils/keyboard";
 import { ResetButton } from "../ui/ResetButton";
+import { KeyCaps } from "../ui/KeyCaps";
 import { SettingContainer } from "../ui/SettingContainer";
 import { useSettings } from "../../hooks/useSettings";
 import { useOsType } from "../../hooks/useOsType";
@@ -275,27 +276,22 @@ export const GlobalShortcutInput: React.FC<GlobalShortcutInputProps> = ({
       disabled={disabled}
       layout="horizontal"
     >
-      <div className="flex items-center space-x-1">
-        {editingShortcutId === shortcutId ? (
-          <div
-            ref={(ref) => setShortcutRef(shortcutId, ref)}
-            className="px-2 py-1 text-sm font-semibold border border-logo-primary bg-logo-primary/30 rounded-md"
-          >
-            {formatCurrentKeys()}
-          </div>
-        ) : (
-          <div
-            className="px-2 py-1 text-sm font-semibold bg-mid-gray/10 border border-mid-gray/80 hover:bg-logo-primary/10 rounded-md cursor-pointer hover:border-logo-primary"
-            onClick={() => startRecording(shortcutId)}
-          >
-            {formatKeyCombination(binding.current_binding, osType)}
-          </div>
-        )}
-        <ResetButton
-          onClick={() => resetBinding(shortcutId)}
-          disabled={isUpdating(`binding_${shortcutId}`)}
+      <ResetButton
+        onClick={() => resetBinding(shortcutId)}
+        disabled={isUpdating(`binding_${shortcutId}`)}
+      />
+      {editingShortcutId === shortcutId ? (
+        <KeyCaps
+          ref={(ref) => setShortcutRef(shortcutId, ref)}
+          combo={formatCurrentKeys()}
+          recording
         />
-      </div>
+      ) : (
+        <KeyCaps
+          combo={formatKeyCombination(binding.current_binding, osType)}
+          onClick={() => startRecording(shortcutId)}
+        />
+      )}
     </SettingContainer>
   );
 };

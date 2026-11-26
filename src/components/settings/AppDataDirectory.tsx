@@ -73,7 +73,6 @@ export const AppDataDirectory: React.FC<AppDataDirectoryProps> = ({
       description={t("settings.about.appDataDirectory.description")}
       descriptionMode={descriptionMode}
       grouped={grouped}
-      layout="stacked"
     >
       <PathDisplay
         path={appDirPath}

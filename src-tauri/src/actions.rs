@@ -14,6 +14,7 @@ use crate::shortcut;
 use crate::tray::{set_tray_state, TrayIconState};
 use crate::utils::{
     self, show_processing_overlay, show_recording_overlay, show_transcribing_overlay,
+    OverlayEndReason,
 };
 use crate::TranscriptionCoordinator;
 use log::{debug, error, info, warn};
@@ -703,7 +704,7 @@ impl ShortcutAction for TranscribeAction {
             // Starting failed (for example due to blocked microphone permissions).
             // Revert UI state so we don't stay stuck in the recording overlay.
             tm.cancel_stream();
-            utils::hide_recording_overlay(app);
+            utils::end_recording_overlay(app, OverlayEndReason::Error);
             set_tray_state(app, TrayIconState::Idle);
             if let Some(err) = recording_error {
                 let error_type = if is_microphone_access_denied(&err) {
@@ -793,7 +794,7 @@ impl ShortcutAction for TranscribeAction {
                 if rm.was_cancelled_since(cancel_generation) {
                     debug!("Transcription operation cancelled after recording stop");
                     tm.cancel_stream();
-                    utils::hide_recording_overlay(&ah);
+                    utils::end_recording_overlay(&ah, OverlayEndReason::Cancelled);
                     set_tray_state(&ah, TrayIconState::Idle);
                     return;
                 }
@@ -803,7 +804,7 @@ impl ShortcutAction for TranscribeAction {
                     // Tear down any streaming worker so its channel doesn't leak
                     // and block the next start_stream.
                     tm.cancel_stream();
-                    utils::hide_recording_overlay(&ah);
+                    utils::end_recording_overlay(&ah, OverlayEndReason::NothingHeard);
                     set_tray_state(&ah, TrayIconState::Idle);
                 } else {
                     // Save WAV concurrently with transcription
@@ -866,7 +867,7 @@ impl ShortcutAction for TranscribeAction {
 
                     if rm.was_cancelled_since(cancel_generation) {
                         debug!("Transcription operation cancelled before output handling");
-                        utils::hide_recording_overlay(&ah);
+                        utils::end_recording_overlay(&ah, OverlayEndReason::Cancelled);
                         set_tray_state(&ah, TrayIconState::Idle);
                         return;
                     }
@@ -905,7 +906,7 @@ impl ShortcutAction for TranscribeAction {
                             .await
                             else {
                                 debug!("Transcription operation cancelled during output handling");
-                                utils::hide_recording_overlay(&ah);
+                                utils::end_recording_overlay(&ah, OverlayEndReason::Cancelled);
                                 set_tray_state(&ah, TrayIconState::Idle);
                                 return;
                             };
@@ -913,7 +914,7 @@ impl ShortcutAction for TranscribeAction {
 
                             if rm.was_cancelled_since(cancel_generation) {
                                 debug!("Transcription operation cancelled before paste");
-                                utils::hide_recording_overlay(&ah);
+                                utils::end_recording_overlay(&ah, OverlayEndReason::Cancelled);
                                 set_tray_state(&ah, TrayIconState::Idle);
                                 return;
                             }
@@ -934,7 +935,7 @@ impl ShortcutAction for TranscribeAction {
                             let history_d = history_time.elapsed();
 
                             if processed.final_text.is_empty() {
-                                utils::hide_recording_overlay(&ah);
+                                utils::end_recording_overlay(&ah, OverlayEndReason::NothingHeard);
                                 set_tray_state(&ah, TrayIconState::Idle);
                             } else {
                                 let ah_clone = ah.clone();
@@ -947,7 +948,7 @@ impl ShortcutAction for TranscribeAction {
                                 ah.run_on_main_thread(move || {
                                     if rm_for_paste.was_cancelled_since(cancel_generation) {
                                         debug!("Transcription operation cancelled before paste");
-                                        utils::hide_recording_overlay(&ah_clone);
+                                        utils::end_recording_overlay(&ah_clone, OverlayEndReason::Cancelled);
                                         set_tray_state(&ah_clone, TrayIconState::Idle);
                                         let _ = paste_done.send(());
                                         return;
@@ -1000,7 +1001,7 @@ impl ShortcutAction for TranscribeAction {
                                 debug!(
                                     "Transcription operation cancelled after transcription error"
                                 );
-                                utils::hide_recording_overlay(&ah);
+                                utils::end_recording_overlay(&ah, OverlayEndReason::Cancelled);
                                 set_tray_state(&ah, TrayIconState::Idle);
                                 return;
                             }
@@ -1022,7 +1023,7 @@ impl ShortcutAction for TranscribeAction {
                                     error!("Failed to save failed history entry: {}", save_err);
                                 }
                             }
-                            utils::hide_recording_overlay(&ah);
+                            utils::end_recording_overlay(&ah, OverlayEndReason::Error);
                             set_tray_state(&ah, TrayIconState::Idle);
                         }
                     }
@@ -1031,7 +1032,13 @@ impl ShortcutAction for TranscribeAction {
                 debug!("No samples retrieved from recording stop");
                 // Tear down any streaming worker so its channel doesn't leak.
                 tm.cancel_stream();
-                utils::hide_recording_overlay(&ah);
+                // A cancel also leaves no samples; say so rather than "nothing heard".
+                let reason = if rm.was_cancelled_since(cancel_generation) {
+                    OverlayEndReason::Cancelled
+                } else {
+                    OverlayEndReason::NothingHeard
+                };
+                utils::end_recording_overlay(&ah, reason);
                 set_tray_state(&ah, TrayIconState::Idle);
             }
         });

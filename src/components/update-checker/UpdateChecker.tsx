@@ -206,6 +206,15 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({ className = "" }) => {
   // the releases index, so the dialog has to say "browse" rather than "download".
   const hasDirectInstaller = portableInstallerUrl !== PORTABLE_RELEASES_URL;
 
+  // The sidebar shows the updater only when it has news; the switch and a
+  // manual check live in About.
+  const hasNews =
+    updateChecksEnabled &&
+    (updateAvailable ||
+      isInstalling ||
+      showUpToDate ||
+      (isChecking && isManualCheckRef.current));
+
   return (
     <>
       {showPortableUpdateDialog && (
@@ -227,7 +236,7 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({ className = "" }) => {
                 {t("common.close")}
               </button>
               <button
-                className="px-3 py-1.5 text-sm rounded bg-logo-primary text-white hover:bg-logo-primary/80 transition-colors"
+                className="px-3 py-1.5 text-sm rounded bg-background-ui text-white hover:bg-background-ui/80 transition-colors"
                 onClick={() => {
                   openUrl(portableInstallerUrl);
                   setShowPortableUpdateDialog(false);
@@ -241,37 +250,39 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({ className = "" }) => {
           </div>
         </div>
       )}
-      <div className={`flex items-center gap-3 ${className}`}>
-        {isUpdateClickable ? (
-          <button
-            onClick={getUpdateStatusAction()}
-            disabled={isUpdateDisabled}
-            className={`transition-colors disabled:opacity-50 tabular-nums ${
-              updateAvailable
-                ? "text-logo-primary hover:text-logo-primary/80 font-medium"
-                : "text-text/60 hover:text-text/80"
-            }`}
-          >
-            {getUpdateStatusText()}
-          </button>
-        ) : (
-          <span className="text-text/60 tabular-nums">
-            {getUpdateStatusText()}
-          </span>
-        )}
+      {hasNews && (
+        <div className={`flex items-center gap-3 text-xs ${className}`}>
+          {isUpdateClickable ? (
+            <button
+              onClick={getUpdateStatusAction()}
+              disabled={isUpdateDisabled}
+              className={`transition-colors disabled:opacity-50 tabular-nums ${
+                updateAvailable
+                  ? "text-logo-primary hover:text-logo-primary/80 font-medium"
+                  : "text-text/60 hover:text-text/80"
+              }`}
+            >
+              {getUpdateStatusText()}
+            </button>
+          ) : (
+            <span className="text-text/60 tabular-nums">
+              {getUpdateStatusText()}
+            </span>
+          )}
 
-        {isInstalling && downloadProgress > 0 && downloadProgress < 100 && (
-          <ProgressBar
-            progress={[
-              {
-                id: "update",
-                percentage: downloadProgress,
-              },
-            ]}
-            size="large"
-          />
-        )}
-      </div>
+          {isInstalling && downloadProgress > 0 && downloadProgress < 100 && (
+            <ProgressBar
+              progress={[
+                {
+                  id: "update",
+                  percentage: downloadProgress,
+                },
+              ]}
+              size="large"
+            />
+          )}
+        </div>
+      )}
     </>
   );
 };

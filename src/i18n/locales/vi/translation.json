@@ -706,10 +706,6 @@
       "dark": "Tối"
     }
   },
-  "overlay": {
-    "transcribing": "Đang chuyển đổi...",
-    "processing": "Đang xử lý..."
-  },
   "whatsNew": {
     "title": "Điểm mới trong Voce v{{version}}"
   },

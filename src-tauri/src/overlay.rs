@@ -34,24 +34,30 @@ tauri_panel! {
 }
 
 // Native overlay window sizes (logical points). One window is reused for every
-// state and resized in `show_overlay_state`; each size need only be at least as
-// large as the card it hosts (the `--ov-*` vars in RecordingOverlay.css). The
-// card is CSS-anchored flush to the screen edge, so window height doesn't move
-// where the card sits — only OVERLAY_TOP_OFFSET / OVERLAY_BOTTOM_OFFSET do. Keep
-// these in sync with the CSS card geometry.
+// state and resized in `show_overlay_state`; each size must hold the Slip card
+// it hosts (RecordingOverlay.css) plus room for the card's drop shadow. The card
+// is CSS-anchored to the screen-edge side of the window, so window height does
+// not move where the card sits; only OVERLAY_TOP_OFFSET / OVERLAY_BOTTOM_OFFSET
+// do. Keep these in sync with the CSS card geometry.
 //
 // On Windows these sizes are additionally multiplied by the accessibility text
 // scale (see windows_text_scale_factor), which WebView2 applies as a zoom.
 //
-// Compact overlay (Minimal / transcribing / processing): the 40h pill animates
-// width from 172 (--ov-rest-w) to 216 (--ov-work-w) and expands from center, so
-// the window must fit the widest state plus a little slack.
-const OVERLAY_WIDTH: f64 = 256.0;
-const OVERLAY_HEIGHT: f64 = 50.0;
+// Compact overlay (Minimal, or a model that does not stream): the 48 pt pill
+// and the widest end message ("Couldn't transcribe", about 180 pt), with shadow
+// room on every side.
+const OVERLAY_WIDTH: f64 = 320.0;
+const OVERLAY_HEIGHT: f64 = 90.0;
 
-// Actual is 394x118, just a little extra
-const OVERLAY_STREAM_WIDTH: f64 = 400.0;
-const OVERLAY_STREAM_HEIGHT: f64 = 120.0;
+// Live overlay: the 420 pt slip at its tallest (two lines, 68 pt) plus shadow
+// room: 30 pt per side, 20 pt above and OVERLAY_SHADOW_PAD below.
+const OVERLAY_STREAM_WIDTH: f64 = 480.0;
+const OVERLAY_STREAM_HEIGHT: f64 = 110.0;
+
+// Transparent space the CSS keeps under the card for its shadow
+// (`--ov-shadow-pad`). The bottom offsets subtract it, so the visible card sits
+// exactly where it did before the shadow was added.
+const OVERLAY_SHADOW_PAD: f64 = 15.0;
 
 /// Overlay window size (logical) for a given UI state.
 fn overlay_dimensions(state: &str) -> (f64, f64) {
@@ -71,10 +77,10 @@ const OVERLAY_TOP_OFFSET: f64 = 46.0;
 const OVERLAY_TOP_OFFSET: f64 = 4.0;
 
 #[cfg(target_os = "macos")]
-const OVERLAY_BOTTOM_OFFSET: f64 = 15.0;
+const OVERLAY_BOTTOM_OFFSET: f64 = 15.0 - OVERLAY_SHADOW_PAD;
 
 #[cfg(any(target_os = "windows", target_os = "linux"))]
-const OVERLAY_BOTTOM_OFFSET: f64 = 40.0;
+const OVERLAY_BOTTOM_OFFSET: f64 = 40.0 - OVERLAY_SHADOW_PAD;
 
 /// Configures the edge and offset of a GTK layer surface. gtk-layer-shell
 /// commits anchor and margin changes itself, including while the surface is
@@ -511,9 +517,9 @@ fn show_overlay_state_on_main(app_handle: &AppHandle, state: &str) {
     // Size the overlay for this state (compact vs. streaming), then position it.
     let (width, height) = overlay_dimensions(state);
     if let Some(overlay_window) = app_handle.get_webview_window("recording_overlay") {
-        // Invalidate any delayed hide still in flight from a previous session
-        // (see `hide_recording_overlay`).
-        OVERLAY_SHOW_GENERATION.fetch_add(1, Ordering::SeqCst);
+        // Invalidate any delayed hide still in flight from a previous session,
+        // including a lingering end message (see `OverlayLifecycle`).
+        OVERLAY_LIFECYCLE.on_show();
 
         #[cfg(target_os = "linux")]
         let shown_with_layer_shell = if LAYER_SHELL_ACTIVE.load(Ordering::SeqCst) {
@@ -677,36 +683,192 @@ fn update_overlay_position_on_main(app_handle: &AppHandle) {
     }
 }
 
-/// Generation counter bumped every time the overlay is shown. The delayed
-/// `hide()` below only unmaps the window if no show happened after it was
-/// scheduled, so a hide left over from a finished transcription can never
-/// take down the overlay of a session that started in the meantime — e.g. a
-/// press the coordinator remembered while the pipeline was busy and started
-/// the instant it drained, well inside the 300 ms hide delay.
-static OVERLAY_SHOW_GENERATION: AtomicU64 = AtomicU64::new(0);
+/// Why a dictation ended without a paste. The overlay shows a short message for
+/// it ("Cancelled", "Nothing heard", "Couldn't transcribe") before it hides.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OverlayEndReason {
+    Cancelled,
+    NothingHeard,
+    Error,
+}
+
+impl OverlayEndReason {
+    /// Payload of the `overlay-ended` event.
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Cancelled => "cancelled",
+            Self::NothingHeard => "nothing_heard",
+            Self::Error => "error",
+        }
+    }
+
+    /// How long the window stays up so the overlay can play its end sequence:
+    /// close the hand or land the dots (up to 655 ms), widen to the message
+    /// (240 ms), hold it (900 ms, 2250 ms for an error) and fade (160 ms). From
+    /// the approved Slip settings, plus a little slack.
+    fn linger_ms(self) -> u64 {
+        match self {
+            Self::Cancelled | Self::NothingHeard => 2050,
+            Self::Error => 3400,
+        }
+    }
+}
+
+/// Delay between the fade-out event and unmapping the window after a normal
+/// finish (paste). The end messages do not change it, so paste is never slower.
+const HIDE_DELAY_MS: u64 = 300;
+
+#[derive(Debug, PartialEq, Eq)]
+enum HidePlan {
+    /// An end message for this session is on screen and owns the hide.
+    Skip,
+    HideAfter {
+        generation: u64,
+        delay_ms: u64,
+    },
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum EndPlan {
+    /// Nothing is on screen to explain, so behave like a plain hide.
+    PlainHide,
+    /// This session already shows an end message; the first one wins.
+    Ignore,
+    Linger {
+        generation: u64,
+        delay_ms: u64,
+    },
+}
+
+/// Show and hide bookkeeping shared by every hide path.
+///
+/// `show_generation` is bumped every time the overlay is shown. A delayed hide
+/// only unmaps the window if no show happened after it was scheduled, so a hide
+/// left over from a finished session can never take down the overlay of a
+/// session that started in the meantime: a press the coordinator remembered
+/// while the pipeline was busy, or a new press during an end message.
+///
+/// `linger_generation` is the session whose end message is on screen. The plain
+/// hides that follow a cancel (the pipeline noticing it was cancelled) are
+/// skipped for that session, so they cannot cut the message short.
+struct OverlayLifecycle {
+    show_generation: AtomicU64,
+    linger_generation: AtomicU64,
+    visible: AtomicBool,
+}
+
+impl OverlayLifecycle {
+    const fn new() -> Self {
+        Self {
+            show_generation: AtomicU64::new(0),
+            linger_generation: AtomicU64::new(u64::MAX),
+            visible: AtomicBool::new(false),
+        }
+    }
+
+    fn on_show(&self) {
+        self.show_generation.fetch_add(1, Ordering::SeqCst);
+        self.visible.store(true, Ordering::SeqCst);
+    }
+
+    fn plan_hide(&self) -> HidePlan {
+        let generation = self.show_generation.load(Ordering::SeqCst);
+        if self.linger_generation.load(Ordering::SeqCst) == generation {
+            HidePlan::Skip
+        } else {
+            HidePlan::HideAfter {
+                generation,
+                delay_ms: HIDE_DELAY_MS,
+            }
+        }
+    }
+
+    fn plan_end(&self, reason: OverlayEndReason) -> EndPlan {
+        if !self.visible.load(Ordering::SeqCst) {
+            return EndPlan::PlainHide;
+        }
+        let generation = self.show_generation.load(Ordering::SeqCst);
+        if self.linger_generation.swap(generation, Ordering::SeqCst) == generation {
+            EndPlan::Ignore
+        } else {
+            EndPlan::Linger {
+                generation,
+                delay_ms: reason.linger_ms(),
+            }
+        }
+    }
+
+    fn is_current(&self, generation: u64) -> bool {
+        self.show_generation.load(Ordering::SeqCst) == generation
+    }
+
+    fn on_hidden(&self, generation: u64) {
+        if self.is_current(generation) {
+            self.visible.store(false, Ordering::SeqCst);
+        }
+    }
+}
+
+static OVERLAY_LIFECYCLE: OverlayLifecycle = OverlayLifecycle::new();
+
+/// Unmaps the window after `delay_ms`, unless a newer session showed it since.
+fn schedule_overlay_hide(window: tauri::webview::WebviewWindow, generation: u64, delay_ms: u64) {
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+        if !OVERLAY_LIFECYCLE.is_current(generation) {
+            log::debug!("Skipping stale overlay hide: a newer session is showing the overlay");
+            return;
+        }
+        let _ = window.hide();
+        OVERLAY_LIFECYCLE.on_hidden(generation);
+    });
+}
 
 /// Hides the recording overlay window with fade-out animation
 pub fn hide_recording_overlay(app_handle: &AppHandle) {
     // Always hide the overlay regardless of settings - if setting was changed while recording,
     // we still want to hide it properly
     if let Some(overlay_window) = app_handle.get_webview_window("recording_overlay") {
-        // Snapshot before doing anything observable, so any show that lands
-        // after this point invalidates the delayed hide below.
-        let scheduled_at = OVERLAY_SHOW_GENERATION.load(Ordering::SeqCst);
-        // Emit event to trigger fade-out animation
-        let _ = overlay_window.emit("hide-overlay", ());
-        // Hide the window after a short delay to allow animation to complete,
-        // unless a newer session has shown the overlay again by then.
-        let window_clone = overlay_window.clone();
-        std::thread::spawn(move || {
-            std::thread::sleep(std::time::Duration::from_millis(300));
-            if OVERLAY_SHOW_GENERATION.load(Ordering::SeqCst) != scheduled_at {
-                log::debug!("Skipping stale overlay hide: a newer session is showing the overlay");
-                return;
+        match OVERLAY_LIFECYCLE.plan_hide() {
+            HidePlan::Skip => {
+                log::debug!("Overlay hide skipped: the end message owns this session's hide");
             }
-            let _ = window_clone.hide();
-        });
+            HidePlan::HideAfter {
+                generation,
+                delay_ms,
+            } => {
+                // Fade out, then unmap the window once the fade has played.
+                let _ = overlay_window.emit("hide-overlay", ());
+                schedule_overlay_hide(overlay_window, generation, delay_ms);
+            }
+        }
     }
+}
+
+/// Ends the session on the overlay with a short message (cancelled, nothing
+/// heard, error), then hides it. A new press during the message pre-empts it.
+/// After a paste use `hide_recording_overlay`, which stays fast.
+pub fn end_recording_overlay(app_handle: &AppHandle, reason: OverlayEndReason) {
+    // Showing is queued onto the main thread (show_overlay_state). Queue the end
+    // there too, so an end that follows a show (a microphone that fails to
+    // start) sees the overlay that show put up.
+    let handle = app_handle.clone();
+    let _ = app_handle.run_on_main_thread(move || {
+        let Some(overlay_window) = handle.get_webview_window("recording_overlay") else {
+            return;
+        };
+        match OVERLAY_LIFECYCLE.plan_end(reason) {
+            EndPlan::PlainHide => hide_recording_overlay(&handle),
+            EndPlan::Ignore => {}
+            EndPlan::Linger {
+                generation,
+                delay_ms,
+            } => {
+                let _ = overlay_window.emit("overlay-ended", reason.as_str());
+                schedule_overlay_hide(overlay_window, generation, delay_ms);
+            }
+        }
+    });
 }
 
 // Cached "overlay is enabled" flag, kept in sync with overlay_style. Avoids
@@ -824,7 +986,7 @@ mod tests {
                 OVERLAY_HEIGHT,
                 OverlayPosition::Bottom,
             ),
-            (3648, 2025, 384, 75)
+            (3600, 1988, 480, 135)
         );
         assert_eq!(
             windows_overlay_bounds(
@@ -836,7 +998,7 @@ mod tests {
                 OVERLAY_HEIGHT,
                 OverlayPosition::Top,
             ),
-            (3648, 6, 384, 75)
+            (3600, 6, 480, 135)
         );
     }
 
@@ -853,7 +1015,7 @@ mod tests {
                 OVERLAY_STREAM_HEIGHT,
                 OverlayPosition::Bottom,
             ),
-            (-1530, 1040, 500, 150)
+            (-1580, 1071, 600, 138)
         );
     }
 
@@ -872,10 +1034,10 @@ mod tests {
             OVERLAY_STREAM_HEIGHT,
             OverlayPosition::Bottom,
         );
-        // 400x120 logical at 1.25 DPI x 1.1 text, still centered horizontally.
-        assert_eq!((x, y, width, height), (-1555, 1025, 550, 165));
-        // Bottom edge unchanged from the 1.0 case above (1040 + 150).
-        assert_eq!(y + height, 1190);
+        // 480x110 logical at 1.25 DPI x 1.1 text, still centered horizontally.
+        assert_eq!((x, y, width, height), (-1610, 1058, 660, 151));
+        // Bottom edge unchanged from the 1.0 case above (1071 + 138).
+        assert_eq!(y + height, 1209);
 
         let (_, top_y, _, _) = windows_overlay_bounds(
             monitor_position,
@@ -888,5 +1050,137 @@ mod tests {
         );
         // Top offset rides the DPI scale alone, so the top edge doesn't move.
         assert_eq!(top_y, -195);
+    }
+}
+
+/// One test per row of the Rust side of the overlay lifecycle table
+/// (docs/overlay-lifecycle.md). The rows that live only in the webview (first
+/// audio, words commit, release, polish) are tested in src/overlay/slip.test.ts.
+#[cfg(test)]
+mod lifecycle_tests {
+    use super::*;
+
+    fn shown() -> OverlayLifecycle {
+        let lifecycle = OverlayLifecycle::new();
+        lifecycle.on_show();
+        lifecycle
+    }
+
+    #[test]
+    fn press_shows_a_new_generation_that_invalidates_older_hides() {
+        let lifecycle = OverlayLifecycle::new();
+        lifecycle.on_show();
+        assert!(lifecycle.is_current(1));
+        lifecycle.on_show();
+        assert!(!lifecycle.is_current(1));
+        assert!(lifecycle.is_current(2));
+    }
+
+    #[test]
+    fn paste_hides_after_the_usual_300_ms_without_lingering() {
+        assert_eq!(
+            shown().plan_hide(),
+            HidePlan::HideAfter {
+                generation: 1,
+                delay_ms: 300
+            }
+        );
+    }
+
+    #[test]
+    fn cancel_lingers_for_the_close_and_message() {
+        assert_eq!(
+            shown().plan_end(OverlayEndReason::Cancelled),
+            EndPlan::Linger {
+                generation: 1,
+                delay_ms: 2050
+            }
+        );
+    }
+
+    #[test]
+    fn nothing_heard_lingers_like_cancel() {
+        assert_eq!(
+            shown().plan_end(OverlayEndReason::NothingHeard),
+            EndPlan::Linger {
+                generation: 1,
+                delay_ms: 2050
+            }
+        );
+    }
+
+    #[test]
+    fn error_lingers_longer() {
+        assert_eq!(
+            shown().plan_end(OverlayEndReason::Error),
+            EndPlan::Linger {
+                generation: 1,
+                delay_ms: 3400
+            }
+        );
+        assert_eq!(OverlayEndReason::Error.as_str(), "error");
+        assert_eq!(OverlayEndReason::NothingHeard.as_str(), "nothing_heard");
+        assert_eq!(OverlayEndReason::Cancelled.as_str(), "cancelled");
+    }
+
+    #[test]
+    fn plain_hides_after_a_cancel_do_not_cut_the_message_short() {
+        let lifecycle = shown();
+        lifecycle.plan_end(OverlayEndReason::Cancelled);
+        assert_eq!(lifecycle.plan_hide(), HidePlan::Skip);
+    }
+
+    #[test]
+    fn a_second_end_for_the_same_session_is_ignored() {
+        let lifecycle = shown();
+        lifecycle.plan_end(OverlayEndReason::Cancelled);
+        assert_eq!(lifecycle.plan_end(OverlayEndReason::Error), EndPlan::Ignore);
+    }
+
+    #[test]
+    fn new_press_during_a_lingering_hide_pre_empts_it() {
+        let lifecycle = shown();
+        let EndPlan::Linger { generation, .. } = lifecycle.plan_end(OverlayEndReason::Cancelled)
+        else {
+            panic!("expected a linger");
+        };
+        lifecycle.on_show();
+        // The lingering hide thread finds a newer session and leaves it alone.
+        assert!(!lifecycle.is_current(generation));
+        // The new session hides normally again, so its paste stays fast.
+        assert_eq!(
+            lifecycle.plan_hide(),
+            HidePlan::HideAfter {
+                generation: 2,
+                delay_ms: 300
+            }
+        );
+        // A stale hide finishing late does not mark the new session hidden.
+        lifecycle.on_hidden(generation);
+        assert!(matches!(
+            lifecycle.plan_end(OverlayEndReason::Error),
+            EndPlan::Linger { generation: 2, .. }
+        ));
+    }
+
+    #[test]
+    fn model_unavailable_never_shows_so_an_end_is_a_plain_hide() {
+        // TranscribeAction::start returns before showing the overlay when no
+        // model can transcribe; a cancel then has nothing to explain.
+        let lifecycle = OverlayLifecycle::new();
+        assert_eq!(
+            lifecycle.plan_end(OverlayEndReason::Cancelled),
+            EndPlan::PlainHide
+        );
+    }
+
+    #[test]
+    fn an_end_after_the_window_hid_is_a_plain_hide() {
+        let lifecycle = shown();
+        lifecycle.on_hidden(1);
+        assert_eq!(
+            lifecycle.plan_end(OverlayEndReason::Cancelled),
+            EndPlan::PlainHide
+        );
     }
 }

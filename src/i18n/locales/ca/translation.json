@@ -709,10 +709,6 @@
       "dark": "Fosc"
     }
   },
-  "overlay": {
-    "transcribing": "S'està transcrivint...",
-    "processing": "S'està processant..."
-  },
   "secureInput": {
     "blockedWithCulprit_one": "{{name}} pot estar blocant 1 drecera",
     "blockedWithCulprit_other": "{{name}} pot estar blocant {{count}} dreceres",

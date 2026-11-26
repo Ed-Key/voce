@@ -1,7 +1,8 @@
 .call-notepad {
   max-width: 1280px;
   margin: 0 auto;
-  padding: 16px 24px;
+  /* No top padding: the window's 40px drag row sits above every page. */
+  padding: 0 24px 16px;
   min-height: 450px;
   display: flex;
   flex-direction: column;
@@ -9,7 +10,8 @@
   font-size: 14px;
   line-height: 1.65;
   width: 100%;
-  height: calc(100vh - 94px);
+  /* 40px drag row above, 16px wrapper padding below. */
+  height: calc(100vh - 56px);
 }
 .call-notepad h1 {
   font-family: var(--font-display);
@@ -251,7 +253,7 @@
 }
 @media (max-height: 700px) {
   .call-notepad {
-    padding: 8px 20px;
+    padding: 0 20px 8px;
     gap: 6px;
   }
   .call-primary,
@@ -764,4 +766,115 @@
     padding-left: 0;
     border-left: 0;
   }
+}
+
+/* The call library uses the shared Voce column, header and group cards. */
+.call-notepad.call-library {
+  display: block;
+  max-width: 680px;
+  height: auto;
+  min-height: 0;
+  margin: 0 auto;
+  padding: 0 0 40px;
+  line-height: 22px;
+}
+.call-library-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font: 400 13px/18px var(--font);
+  color: var(--text-2);
+  margin: -10px 0 24px 14px;
+}
+.call-library .call-row {
+  min-height: 42px;
+  padding: 0;
+  border-radius: 0;
+}
+.call-library .call-row:first-child {
+  border-radius: 11px 11px 0 0;
+}
+.call-library .call-row:last-child {
+  border-radius: 0 0 11px 11px;
+}
+.call-library .call-row:only-child {
+  border-radius: 11px;
+}
+.call-library .call-row:hover,
+.call-library .call-row:focus-within {
+  background: var(--hover);
+}
+.call-library .call-row-open {
+  align-self: stretch;
+  padding: 0 14px;
+  gap: 16px;
+  cursor: pointer;
+}
+.call-library .call-row-title {
+  flex: 1;
+  min-width: 0;
+  font: 500 14px/20px var(--font);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.call-library .call-row-length {
+  font: 500 12.5px/16px var(--font);
+  color: var(--text-2);
+  width: 92px;
+  text-align: right;
+  white-space: nowrap;
+}
+.call-library .call-row-delete {
+  right: 10px;
+  background: var(--hover);
+}
+.call-library .call-info > summary {
+  width: 15px;
+  height: 28px;
+  min-width: 0;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 7px;
+  color: var(--text-3);
+}
+.call-library .call-info > summary:hover,
+.call-library .call-info[open] > summary {
+  color: var(--text);
+}
+.call-library .call-info > summary svg {
+  width: 15px;
+  height: 15px;
+}
+.call-library .call-info-panel {
+  top: 34px;
+  background: var(--control);
+  border-color: var(--line-strong);
+  border-radius: 10px;
+  box-shadow: 0 12px 32px var(--shadow);
+  font: 400 12.5px/18px var(--font);
+  color: var(--text-2);
+}
+.call-library .call-info-panel .v-row {
+  padding: 0;
+}
+.call-library .call-info-actions button {
+  color: var(--text-2);
+  font: 500 13px/18px var(--font);
+}
+.call-library .call-info-actions button:hover {
+  color: var(--text);
+}
+.call-library .v-ph h1 {
+  font: 640 22px/28px var(--font);
+  letter-spacing: -0.012em;
+}
+/* .obs resets button backgrounds; switches keep their track. */
+.obs .v-tog {
+  background: var(--track);
+}
+.obs .v-tog[aria-checked="true"] {
+  background: var(--accent-fill);
 }

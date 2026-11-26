@@ -706,10 +706,6 @@
       "dark": "Tmavý"
     }
   },
-  "overlay": {
-    "transcribing": "Přepisuji...",
-    "processing": "Zpracovávám..."
-  },
   "whatsNew": {
     "title": "Novinky v Voce v{{version}}"
   },

@@ -709,10 +709,6 @@
       "dark": "Donker"
     }
   },
-  "overlay": {
-    "transcribing": "Transcriberen...",
-    "processing": "Verwerken..."
-  },
   "secureInput": {
     "blockedWithCulprit_one": "{{name}} blokkeert mogelijk 1 sneltoets",
     "blockedWithCulprit_other": "{{name}} blokkeert mogelijk {{count}} sneltoetsen",
