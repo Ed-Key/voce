@@ -1,0 +1,161 @@
+# Builds Voce for Apple Silicon Macs.
+#
+# Run it from the Actions tab ("Release", then "Run workflow").
+# - With all Apple secrets set, it signs and notarizes the app and uploads the
+#   DMG and the updater files (latest.json and the signed .app.tar.gz) to a
+#   DRAFT release. Nobody sees a draft, and the in-app updater ignores it, until
+#   you press Publish on the release page. It runs from main only, and stops if
+#   the version already has a release (draft or published) or a tag on another
+#   commit; it never deletes or overwrites a release.
+# - Without them (a rehearsal), it builds an unsigned app and keeps it as a
+#   workflow artifact only, so an unsigned build can never be published.
+#
+# The version comes from src-tauri/tauri.conf.json; bump it before each release.
+#
+# Secrets:
+#   TAURI_SIGNING_PRIVATE_KEY, TAURI_SIGNING_PRIVATE_KEY_PASSWORD  updater key (required)
+#   APPLE_CERTIFICATE           Developer ID Application certificate, .p12 as base64
+#   APPLE_CERTIFICATE_PASSWORD  password of that .p12
+#   APPLE_API_ISSUER            App Store Connect API key: issuer id
+#   APPLE_API_KEY               App Store Connect API key: key id
+#   APPLE_API_KEY_P8            App Store Connect API key: contents of the .p8 file
+
+name: Release
+
+on: workflow_dispatch
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: macos-26 # Apple Silicon; the macOS 26 SDK is needed for the Apple Intelligence provider
+    timeout-minutes: 90
+    env:
+      CMAKE_POLICY_VERSION_MINIMUM: "3.5"
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Signed only when every Apple secret is present; anything less is a rehearsal.
+      SIGNED: ${{ secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_CERTIFICATE_PASSWORD != '' && secrets.APPLE_API_ISSUER != '' && secrets.APPLE_API_KEY != '' && secrets.APPLE_API_KEY_P8 != '' }}
+      BUNDLE: src-tauri/target/aarch64-apple-darwin/release/bundle
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Read version
+        id: version
+        run: |
+          VERSION=$(python3 -c "import json; print(json.load(open('src-tauri/tauri.conf.json'))['version'])")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Building Voce $VERSION (signed: $SIGNED)"
+
+      - name: Check the release can be created
+        if: env.SIGNED == 'true'
+        run: |
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "::error::Releases are built from main only (this run is on $GITHUB_REF)."
+            exit 1
+          fi
+          .github/scripts/release-guard.sh "${{ steps.version.outputs.tag }}" "$GITHUB_SHA"
+
+      - uses: oven-sh/setup-bun@v2
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - name: Install frontend dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Import the Developer ID certificate
+        if: env.SIGNED == 'true'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          KEYCHAIN_PASSWORD=$(openssl rand -base64 24)
+          echo "$APPLE_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security set-keychain-settings -t 3600 -u build.keychain
+          security import "$RUNNER_TEMP/certificate.p12" -k build.keychain -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" build.keychain
+          rm "$RUNNER_TEMP/certificate.p12"
+          IDENTITY=$(security find-identity -v -p codesigning build.keychain | grep "Developer ID Application" | head -1 | awk -F'"' '{print $2}')
+          if [ -z "$IDENTITY" ]; then
+            echo "::error::No Developer ID Application identity in APPLE_CERTIFICATE."
+            exit 1
+          fi
+          echo "APPLE_SIGNING_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
+
+      - name: Set up notarization
+        if: env.SIGNED == 'true'
+        env:
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          printf '%s' "$APPLE_API_KEY_P8" > "$RUNNER_TEMP/notary.p8"
+          {
+            echo "APPLE_API_KEY_PATH=$RUNNER_TEMP/notary.p8"
+            echo "APPLE_API_ISSUER=$APPLE_API_ISSUER"
+            echo "APPLE_API_KEY=$APPLE_API_KEY"
+          } >> "$GITHUB_ENV"
+
+      # Signs and notarizes when the two steps above ran (Tauri reads
+      # APPLE_SIGNING_IDENTITY and APPLE_API_*); otherwise builds unsigned.
+      # Updater packages are switched on here only, so local builds need no updater key.
+      - name: Build
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: bun run tauri build --target aarch64-apple-darwin --bundles app,dmg --config '{"bundle":{"createUpdaterArtifacts":true}}'
+
+      - name: Check the signature and notarization
+        if: env.SIGNED == 'true'
+        run: |
+          APP=$(find "$BUNDLE/macos" -maxdepth 1 -name "*.app" | head -1)
+          codesign --verify --deep --strict "$APP"
+          spctl --assess --type execute -vv "$APP"
+          xcrun stapler validate "$APP"
+
+      - name: Upload to a draft release
+        if: env.SIGNED == 'true'
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          DMG=$(find "$BUNDLE/dmg" -maxdepth 1 -name "*.dmg" | head -1)
+          UPDATE=$(find "$BUNDLE/macos" -maxdepth 1 -name "*.app.tar.gz" | head -1)
+          NAME=$(basename "$UPDATE" | tr ' ' '.')
+          python3 - "$UPDATE.sig" "$NAME" <<'PY'
+          import json, os, sys, datetime
+          sig, name = open(sys.argv[1]).read().strip(), sys.argv[2]
+          url = f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/releases/download/{os.environ['TAG']}/{name}"
+          json.dump({"version": os.environ["VERSION"],
+                     "pub_date": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                     "platforms": {"darwin-aarch64": {"signature": sig, "url": url}}},
+                    open("latest.json", "w"), indent=2)
+          PY
+          # Checked again right before creating: the build takes a while.
+          # The workflow never deletes or overwrites a release.
+          .github/scripts/release-guard.sh "$TAG" "$GITHUB_SHA"
+          gh release create "$TAG" --draft --target "$GITHUB_SHA" --title "Voce $TAG" \
+            --notes "Download the .dmg below, open it, and drag Voce to Applications. Apple Silicon Macs, macOS 14.4 or later." \
+            "$DMG" "$UPDATE" "$UPDATE.sig" latest.json
+
+      - name: Keep the rehearsal build
+        if: env.SIGNED != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: voce-${{ steps.version.outputs.version }}-unsigned
+          path: |
+            ${{ env.BUNDLE }}/dmg/*.dmg
+            ${{ env.BUNDLE }}/macos/*.app.tar.gz
+            ${{ env.BUNDLE }}/macos/*.app.tar.gz.sig
+          retention-days: 7

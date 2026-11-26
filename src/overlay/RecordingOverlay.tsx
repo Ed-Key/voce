@@ -222,7 +222,6 @@ const RecordingOverlay: React.FC = () => {
     card.style.paddingInlineEnd = `${c.pr.toFixed(1)}px`;
     card.style.opacity = c.op.toFixed(3);
     card.style.transform = `translateY(${dy.toFixed(2)}px)`;
-    card.style.alignItems = f.text ? "flex-end" : "center";
 
     const clip = clipRef.current;
     const flow = flowRef.current;
