@@ -13,7 +13,7 @@
 
 Hold a key, speak, let go: your words are transcribed on your Mac, cleaned up by a small local model, and pasted into whatever app you are using. Voce can also take notes on calls, transcribing both sides live and writing a summary afterwards, without sending audio anywhere.
 
-Voce is a personal project built on top of [Handy](https://github.com/cjpais/Handy) by CJ Pais. It is macOS only and parts of it are experimental.
+Voce is a personal project built on top of [Handy](https://github.com/cjpais/Handy) by CJ Pais (see [Credits](#credits-and-license)). It is macOS only and parts of it are experimental.
 
 <p align="center">
   <picture>
@@ -137,6 +137,17 @@ An optional second route connects to a ChatGPT task through an OpenAI tunnel. It
 - Optionally, your ChatGPT plugin page as `VITE_ASSISTIE_PLUGIN_URL` in `.env.local`, which adds an "open" button.
 
 ## Credits and license
+
+<p align="center">
+  <a href="https://github.com/cjpais/Handy">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/assets/handy-lineage-on-dark.svg">
+      <img src="docs/assets/handy-lineage.svg" width="760" alt="A waveform split along its baseline: Handy's grey bars run the full width below the line, and Voce's indigo bars start above it at the point marked forked at v0.9.8">
+    </picture>
+  </a>
+</p>
+
+Voce is an independent fork. It is not affiliated with or endorsed by the Handy project, and uses its own name and branding.
 
 Voce is MIT licensed, like Handy. See [LICENSE](LICENSE).
 
