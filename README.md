@@ -15,9 +15,23 @@ Hold a key, speak, let go: your words are transcribed on your Mac, cleaned up by
 
 Voce is a personal project built on top of [Handy](https://github.com/cjpais/Handy) by CJ Pais. It is macOS only and parts of it are experimental.
 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: light)" srcset="docs/assets/screenshot-history-light.png">
+    <img src="docs/assets/screenshot-history-dark.png" width="820" alt="The Voce window on the History page: a sidebar with Calls, Memory, History and settings, and a column of recent dictations with play buttons">
+  </picture>
+</p>
+
 ## What it does
 
-- **Dictation.** Push-to-talk speech to text with a streaming speech model running on the GPU. The text appears live in a small overlay while you speak and is pasted when you let go.
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: light)" srcset="docs/assets/overlay-light.gif">
+    <img src="docs/assets/overlay-dark.gif" width="480" alt="The dictation overlay: dots circle while the microphone starts, turn into the hand, and the card widens into live text that is pasted on release">
+  </picture>
+</p>
+
+- **Dictation.** Push-to-talk speech to text with a streaming speech model running on the GPU. While you hold the key, a small overlay shows the hand mark: its fingers follow your voice and it nods as each word lands, then the card widens into the live text. When you let go, the text is pasted into the app you were using.
 - **Cleanup while you speak.** An optional local language model (for example one served by LM Studio) fixes punctuation, removes filler words and adds paragraphs. With early cleanup on, Voce cleans the text while you are still talking, so after you let go it only has to finish the last sentence. Typical release-to-paste time is well under a second.
 - **Meeting notes.** Records the microphone and the other side of a call, transcribes them live with a streaming model on the Neural Engine, removes speaker echo, and writes notes and a summary when the call ends. Detects Discord, FaceTime, Zoom and Google Meet calls and offers to start (it never starts recording on its own).
 - **Meeting companion (experimental).** A companion that reads the live transcript and offers short pointers and answers in a slip under the Mac's notch. It currently runs on OpenAI's Codex CLI; see [Experimental: meeting companion](#experimental-meeting-companion).

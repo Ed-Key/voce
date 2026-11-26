@@ -12,6 +12,8 @@ import {
   endDuration,
   frameAt,
   newLevelInput,
+  newReact,
+  reactStep,
   readLevels,
   reduce,
 } from "./slip";
@@ -245,6 +247,26 @@ const LISTEN_AT = 100 + 655 + 250 + 260 + 10;
   assert.ok(inp.loud < 0.01, "room tone is silence");
   readLevels(inp, Array(16).fill(bucket(0.72)), 3033);
   assert.ok(inp.loud > 0.85, "speech is loud");
+}
+
+// reaction: normal speech reaches the mark's full size; quiet speech still lifts
+{
+  const bucket = (f: number) => Math.pow(f * 1.3, 0.7);
+  const speak = (room: number, voice: number) => {
+    const inp = newLevelInput();
+    const c = newReact();
+    let t = 0;
+    for (; t < 3000; t += 33) readLevels(inp, Array(16).fill(bucket(room)), t);
+    let top = 0;
+    for (; t < 4500; t += 33) {
+      readLevels(inp, Array(16).fill(bucket(voice)), t);
+      reactStep(c, 33, t, inp);
+      top = Math.max(top, c.lev);
+    }
+    return top;
+  };
+  assert.ok(speak(0.45, 0.72) >= 0.999, "normal speech reaches full length");
+  assert.ok(speak(0.45, 0.55) > 0.6, "quiet speech still lifts the fingers");
 }
 
 console.log("slip overlay: all assertions passed");

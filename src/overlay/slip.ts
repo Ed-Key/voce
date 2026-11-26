@@ -143,11 +143,18 @@ function noise(i: number, x: number) {
 }
 const PROF = [0.8, 1, 0.9, 0.68];
 
-// ponytail: calibration knob, set from the visualizer's own notes (room tone
-// about -48, dictation about -32 in its dB scale) and not yet checked against
-// a real microphone. Raise it if the fingers sit too high, lower it if speech
-// barely lifts them.
-const SPEECH_SPAN = 0.3;
+// ponytail: calibration knob. Loudness above the room floor that counts as
+// full voice. 0.3 (the visualizer's own scale) left real dictation lifting the
+// fingers only partway on the owner's mic; 0.15 reads a normal speaking voice
+// as full. Raise it if the fingers sit too high, lower it if speech barely
+// lifts them.
+const SPEECH_SPAN = 0.15;
+// The auto-leveler divides by the recent peak, never by less than this, so a
+// quiet room does not blow up tiny sounds. Lower means moderate speech counts.
+const PEAK_FLOOR = 0.3;
+// Speech at its recent peak overshoots full length a little, so the fingers
+// reach the mark's natural size (the old 0.85 capped them at 85%).
+const PEAK_BOOST = 1.15;
 
 export interface LevelInput {
   floor: number | null;
@@ -194,7 +201,7 @@ export interface ReactState {
 }
 export const newReact = (): ReactState => ({
   L: 0,
-  pk: 0.45,
+  pk: PEAK_FLOOR,
   g: 0,
   last: -1e9,
   lev: 0,
@@ -210,8 +217,8 @@ export function reactStep(
   c.L +=
     (inp.loud - c.L) *
     (1 - Math.exp(-dt / (inp.loud > c.L ? SLIP.attack : SLIP.release)));
-  c.pk = Math.max(c.L, c.pk * Math.exp(-dt / 4000), 0.45);
-  const lev = cl(((SLIP.gain / 1.3) * 0.85 * c.L) / c.pk);
+  c.pk = Math.max(c.L, c.pk * Math.exp(-dt / 4000), PEAK_FLOOR);
+  const lev = cl(((SLIP.gain / 1.3) * PEAK_BOOST * c.L) / c.pk);
   if (inp.vad > SLIP.gateTh) c.last = now;
   const open = now - c.last < SLIP.gateHold ? 1 : 0;
   c.g += (open - c.g) * (1 - Math.exp(-dt / (open ? 35 : 140)));

@@ -4,7 +4,7 @@
 // settings (165 wpm, 600 ms commit lag). Fictional text only.
 
 const TEXT =
-  "Okay, so for the review tomorrow, the main thing I want to flag is that the alignment stage now runs in twenty six seconds, not seventy five. The words come out identical, so I think we can turn it on for every upload.";
+  "Okay, so for the meeting tomorrow, the main thing I want to cover is that the new build now starts in two seconds instead of seven. Everything else looks the same, so I think we can ship it to everyone on Friday.";
 
 interface Word {
   w: string;
