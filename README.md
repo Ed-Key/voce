@@ -1,6 +1,15 @@
-# Voce
+<p align="center">
+  <img src="docs/assets/voce-icon.png" width="112" alt="Voce app icon: four voice bars fanned into a waving hand">
+</p>
 
-Private, on-device dictation and meeting notes for macOS.
+<h1 align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/voce-wordmark-on-dark.svg">
+    <img src="docs/assets/voce-wordmark.svg" height="52" alt="Voce">
+  </picture>
+</h1>
+
+<p align="center">Private, on-device dictation and meeting notes for macOS.</p>
 
 Hold a key, speak, let go: your words are transcribed on your Mac, cleaned up by a small local model, and pasted into whatever app you are using. Voce can also take notes on calls, transcribing both sides live and writing a summary afterwards, without sending audio anywhere.
 
