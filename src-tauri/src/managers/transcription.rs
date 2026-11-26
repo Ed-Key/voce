@@ -828,12 +828,23 @@ impl TranscriptionManager {
         }
         let rx = self.router.open();
         self.stream_active.store(false, Ordering::Release);
+        // Taken now, on the thread that just armed early cleanup for this
+        // dictation, so a later dictation's session is never mistaken for ours.
+        let early_token = self
+            .app_handle
+            .try_state::<Arc<crate::early_cleanup::EarlyCleanup>>()
+            .map(|ec| ec.session());
 
         let manager = self.clone();
-        thread::spawn(move || manager.run_stream_worker(rx, worker_id));
+        thread::spawn(move || manager.run_stream_worker(rx, worker_id, early_token));
     }
 
-    fn run_stream_worker(&self, rx: mpsc::Receiver<StreamCmd>, worker_id: u64) {
+    fn run_stream_worker(
+        &self,
+        rx: mpsc::Receiver<StreamCmd>,
+        worker_id: u64,
+        early_token: Option<u64>,
+    ) {
         let _worker = StreamWorkerGuard {
             worker_id,
             active_stream_worker: Arc::clone(&self.active_stream_worker),
@@ -986,6 +997,13 @@ impl TranscriptionManager {
             );
 
             let mut perf = StreamPerf::new();
+            // Early cleanup (if armed for this dictation) gets the filtered
+            // committed text, the same filter finalize applies to the full text.
+            let early = early_token.and_then(|token| {
+                self.app_handle
+                    .try_state::<Arc<crate::early_cleanup::EarlyCleanup>>()
+                    .map(|s| (Arc::clone(s.inner()), token))
+            });
             while let Ok(cmd) = rx.recv() {
                 match cmd {
                     StreamCmd::Feed(pcm) => {
@@ -1003,6 +1021,21 @@ impl TranscriptionManager {
                                 );
                                 if update.committed_changed || update.tentative_changed {
                                     let text = stream.text();
+                                    if let (true, Some((ec, token))) =
+                                        (update.committed_changed, &early)
+                                    {
+                                        let raw_words = text.committed.split_whitespace().count();
+                                        if ec.due(*token, raw_words) {
+                                            let filtered = post_process_transcription_text(
+                                                text.committed.clone(),
+                                                &settings,
+                                                false,
+                                                &output_language,
+                                                &languages,
+                                            );
+                                            ec.offer(*token, filtered, raw_words);
+                                        }
+                                    }
                                     perf.record_emit();
                                     let (committed, tentative) = preview_script.convert(
                                         &text.committed,
@@ -1157,6 +1190,13 @@ impl TranscriptionManager {
 
     /// Abandon any active stream without producing text (e.g. on cancel).
     pub fn cancel_stream(&self) {
+        // Every path that abandons a dictation comes through here.
+        if let Some(ec) = self
+            .app_handle
+            .try_state::<Arc<crate::early_cleanup::EarlyCleanup>>()
+        {
+            ec.cancel();
+        }
         if let Some(tx) = self.router.take() {
             let _ = tx.send(StreamCmd::Cancel);
         }

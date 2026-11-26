@@ -10,7 +10,7 @@ import {
 import { toast } from "sonner";
 import { commands } from "@/bindings";
 import { useSettingsStore } from "@/stores/settingsStore";
-import HandyTextLogo from "../icons/HandyTextLogo";
+import VoceWordmark from "../icons/VoceWordmark";
 import { Keyboard, Mic, Check, Loader2 } from "lucide-react";
 
 interface AccessibilityOnboardingProps {
@@ -44,6 +44,7 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
     microphone: "checking",
   });
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const completionStarted = useRef(false);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const errorCountRef = useRef<number>(0);
   const MAX_POLLING_ERRORS = 3;
@@ -61,8 +62,15 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
       : true;
 
   const completeOnboarding = useCallback(async () => {
-    await Promise.all([refreshAudioDevices(), refreshOutputDevices()]);
-    timeoutRef.current = setTimeout(() => onComplete(), 300);
+    if (completionStarted.current) return;
+    completionStarted.current = true;
+    try {
+      await Promise.all([refreshAudioDevices(), refreshOutputDevices()]);
+      timeoutRef.current = setTimeout(() => onComplete(), 300);
+    } catch (error) {
+      completionStarted.current = false;
+      throw error;
+    }
   }, [onComplete, refreshAudioDevices, refreshOutputDevices]);
 
   const hasWindowsMicrophoneAccess = useCallback(async (): Promise<boolean> => {
@@ -111,18 +119,6 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
             checkAccessibilityPermission(),
             checkMicrophonePermission(),
           ]);
-
-          // If accessibility is granted, initialize Enigo and shortcuts
-          if (accessibilityGranted) {
-            try {
-              await Promise.all([
-                commands.initializeEnigo(),
-                commands.initializeShortcuts(),
-              ]);
-            } catch (e) {
-              console.warn("Failed to initialize after permission grant:", e);
-            }
-          }
 
           const newState: PermissionsState = {
             accessibility: accessibilityGranted ? "granted" : "needed",
@@ -204,13 +200,6 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
 
           if (accessibilityGranted && prev.accessibility !== "granted") {
             newState.accessibility = "granted";
-            // Initialize Enigo and shortcuts when accessibility is granted
-            Promise.all([
-              commands.initializeEnigo(),
-              commands.initializeShortcuts(),
-            ]).catch((e) => {
-              console.warn("Failed to initialize after permission grant:", e);
-            });
           }
 
           if (microphoneGranted && prev.microphone !== "granted") {
@@ -324,7 +313,7 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
   return (
     <div className="h-screen w-full flex flex-col p-6 gap-6 items-center justify-center">
       <div className="flex flex-col items-center gap-2">
-        <HandyTextLogo width={200} />
+        <VoceWordmark width={200} />
       </div>
 
       <div className="max-w-md w-full flex flex-col items-center gap-4">
@@ -335,6 +324,11 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
           <p className="text-text/70">
             {t("onboarding.permissions.description")}
           </p>
+          {isMacOS && (
+            <p className="text-xs text-text/60 mt-3">
+              {t("calls.permissionHelp")}
+            </p>
+          )}
         </div>
 
         {/* Microphone Permission Card */}

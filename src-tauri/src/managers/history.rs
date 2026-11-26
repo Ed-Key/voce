@@ -406,6 +406,37 @@ impl HistoryManager {
         Ok(())
     }
 
+    /// Deletes the audio of unsaved dictations older than `cutoff`; every row
+    /// (the text) stays. Returns how many files were removed.
+    fn expire_audio_with_conn(
+        conn: &Connection,
+        recordings_dir: &std::path::Path,
+        cutoff: i64,
+    ) -> Result<usize> {
+        let mut deleted = 0;
+        for file_name in Self::expired_audio_with_conn(conn, cutoff)? {
+            let file_path = recordings_dir.join(&file_name);
+            if file_path.exists() {
+                match fs::remove_file(&file_path) {
+                    Ok(()) => deleted += 1,
+                    Err(e) => error!("Failed to delete WAV file {}: {}", file_name, e),
+                }
+            }
+        }
+        Ok(deleted)
+    }
+
+    /// File names of unsaved dictations older than `cutoff`, whose audio expires.
+    fn expired_audio_with_conn(conn: &Connection, cutoff: i64) -> Result<Vec<String>> {
+        let mut stmt = conn.prepare(
+            "SELECT file_name FROM transcription_history WHERE saved = 0 AND timestamp < ?1",
+        )?;
+        let names = stmt
+            .query_map(params![cutoff], |row| row.get::<_, String>("file_name"))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(names)
+    }
+
     fn cleanup_by_time(
         &self,
         retention_period: crate::settings::RecordingRetentionPeriod,
@@ -421,25 +452,13 @@ impl HistoryManager {
             _ => unreachable!("Should not reach here"),
         };
 
-        // Get all unsaved entries older than the cutoff timestamp
-        let mut stmt = conn.prepare(
-            "SELECT id, file_name FROM transcription_history WHERE saved = 0 AND timestamp < ?1",
-        )?;
-
-        let rows = stmt.query_map(params![cutoff_timestamp], |row| {
-            Ok((row.get::<_, i64>("id")?, row.get::<_, String>("file_name")?))
-        })?;
-
-        let mut entries_to_delete: Vec<(i64, String)> = Vec::new();
-        for row in rows {
-            entries_to_delete.push(row?);
-        }
-
-        let deleted_count = self.delete_entries_and_files(&entries_to_delete)?;
-
+        // Time-based retention keeps the dictation text; only the audio of
+        // unsaved entries expires after the period.
+        let deleted_count =
+            Self::expire_audio_with_conn(&conn, &self.recordings_dir, cutoff_timestamp)?;
         if deleted_count > 0 {
             debug!(
-                "Cleaned up {} old history entries based on retention period",
+                "Deleted the audio of {} dictations past the retention period",
                 deleted_count
             );
         }
@@ -697,6 +716,48 @@ mod tests {
             ],
         )
         .expect("insert history entry");
+    }
+
+    #[test]
+    fn time_retention_expires_old_audio_but_keeps_every_row() {
+        let conn = setup_conn();
+        let dir = tempfile::tempdir().unwrap();
+        for ts in [100, 200, 300] {
+            insert_entry(&conn, ts, "text", None);
+            fs::write(dir.path().join(format!("handy-{ts}.wav")), b"RIFF").unwrap();
+        }
+        conn.execute(
+            "UPDATE transcription_history SET saved = 1 WHERE timestamp = 200",
+            [],
+        )
+        .unwrap();
+        let removed = HistoryManager::expire_audio_with_conn(&conn, dir.path(), 250).unwrap();
+        assert_eq!(removed, 1);
+        assert!(
+            !dir.path().join("handy-100.wav").exists(),
+            "old audio expires"
+        );
+        assert!(
+            dir.path().join("handy-200.wav").exists(),
+            "saved audio stays"
+        );
+        assert!(
+            dir.path().join("handy-300.wav").exists(),
+            "recent audio stays"
+        );
+        let rows: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM transcription_history WHERE transcription_text = 'text'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(rows, 3, "the text of every dictation stays");
+        // Running again is harmless.
+        assert_eq!(
+            HistoryManager::expire_audio_with_conn(&conn, dir.path(), 250).unwrap(),
+            0
+        );
     }
 
     #[test]

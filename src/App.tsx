@@ -2,6 +2,7 @@ import {
   useEffect,
   useLayoutEffect,
   useState,
+  useCallback,
   useRef,
   type ReactNode,
 } from "react";
@@ -140,6 +141,15 @@ function App() {
   }, [settings?.debug_mode, updateSetting]);
 
   // Listen for recording errors from the backend and show a toast
+  useEffect(() => {
+    const subscription = listen("call-invitation-open", () =>
+      setCurrentSection("calls"),
+    );
+    return () => {
+      void subscription.then((unlisten) => unlisten());
+    };
+  }, []);
+
   useEffect(() => {
     const unlisten = listen<RecordingErrorEvent>("recording-error", (event) => {
       const { error_type, detail } = event.payload;
@@ -281,11 +291,11 @@ function App() {
     }
   };
 
-  const handleAccessibilityComplete = () => {
+  const handleAccessibilityComplete = useCallback(() => {
     // Returning users already have models, skip to main app
     // New users need to select a model
     setOnboardingStep(isReturningUser ? "done" : "model");
-  };
+  }, [isReturningUser]);
 
   const handleModelSelected = () => {
     // Transition to main app - user has started a download

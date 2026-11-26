@@ -1,0 +1,491 @@
+.assistie-panel {
+  /* Margin-note world: graphite ink, hairline rules, Handy pink only as highlighter. */
+  --note-rule: color-mix(in srgb, currentColor 16%, transparent);
+  --note-quiet: color-mix(in srgb, currentColor 64%, transparent);
+  --note-highlight: color-mix(
+    in srgb,
+    var(--color-logo-primary, #f28cbb) 62%,
+    transparent
+  );
+  width: 100%;
+  max-width: 440px;
+  border: 1px solid var(--note-rule);
+  border-radius: 12px;
+  padding: 16px 18px;
+  background: var(--color-background, #2c2a29);
+  color: var(--color-text, #f3f0ed);
+  font-size: 13px;
+  line-height: 1.65;
+  text-align: left;
+  overflow-wrap: anywhere;
+  color-scheme: inherit;
+  display: flex;
+  flex-direction: column;
+  max-height: max(280px, calc(100vh - 200px));
+}
+.assistie-panel header,
+.assistie-panel footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+.assistie-panel > :not(.assistie-replies) {
+  flex-shrink: 0;
+}
+.assistie-panel h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+.assistie-panel header span {
+  color: var(--accent-ink);
+  font-size: 11px;
+}
+.assistie-privacy,
+.assistie-empty,
+.assistie-panel small {
+  color: color-mix(in srgb, currentColor 78%, transparent);
+  font-size: 11px;
+}
+.assistie-privacy {
+  margin: 4px 0 8px;
+}
+.assistie-replies {
+  flex: 1;
+  min-height: 0;
+  max-height: 290px;
+  overflow-y: auto;
+  scrollbar-color: #79706d transparent;
+}
+/* Each reply is a margin note: one hairline rule at its left, no box. */
+.assistie-replies article {
+  position: relative;
+  padding-left: 16px;
+}
+.assistie-replies article::before {
+  content: "";
+  position: absolute;
+  inset: 2px auto 2px 0;
+  width: 1px;
+  background: var(--note-rule);
+}
+.assistie-replies article + article {
+  margin-top: 18px;
+}
+.assistie-replies article p {
+  white-space: pre-wrap;
+  margin: 0 0 6px;
+}
+.assistie-replies article p:not(.assistie-question) {
+  font-size: 14px;
+  line-height: 1.5;
+  font-weight: 500;
+  text-wrap: pretty;
+}
+.assistie-panel small {
+  font-variant-numeric: tabular-nums;
+}
+.assistie-panel mark {
+  color: inherit;
+  background-image: linear-gradient(
+    var(--note-highlight),
+    var(--note-highlight)
+  );
+  background-repeat: no-repeat;
+  background-size: 100% 0.62em;
+  background-position: 0 92%;
+  background-color: transparent;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+  padding: 0 2px;
+}
+.assistie-panel details {
+  font-size: 11px;
+  color: color-mix(in srgb, currentColor 78%, transparent);
+}
+.assistie-panel summary {
+  cursor: pointer;
+}
+.assistie-panel blockquote {
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.assistie-panel footer {
+  margin-top: 8px;
+}
+.assistie-question {
+  font-size: 11px;
+  color: color-mix(in srgb, currentColor 78%, transparent);
+}
+.assistie-context {
+  margin-top: 8px;
+}
+.assistie-history {
+  border-top: 1px solid color-mix(in srgb, currentColor 18%, transparent);
+  margin-top: 12px;
+  padding-top: 10px;
+}
+.assistie-history article {
+  margin-top: 10px;
+  font-size: 13px;
+  color: var(--color-text, #f3f0ed);
+}
+.assistie-source-notice {
+  display: block;
+}
+.assistie-context p {
+  margin: 6px 0;
+}
+.assistie-ask {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+.assistie-ask input {
+  width: 100%;
+  min-width: 0;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid color-mix(in srgb, currentColor 28%, transparent);
+  border-radius: 0;
+  padding: 7px 0;
+  color: inherit;
+  font: inherit;
+  caret-color: var(--color-logo-primary, #ec8fbc);
+}
+.assistie-ask input::placeholder {
+  color: color-mix(in srgb, currentColor 75%, transparent);
+}
+.assistie-ask input:focus-visible {
+  outline: 0;
+  border-bottom: 2px solid var(--accent-ink);
+  padding-bottom: 6px;
+}
+.assistie-ask input:disabled {
+  opacity: 0.65;
+}
+.assistie-pending {
+  min-height: 17px;
+  font-size: 10px;
+  margin: 5px 0 0;
+  color: color-mix(in srgb, currentColor 78%, transparent);
+}
+.assistie-panel button {
+  background: transparent;
+  color: inherit;
+  border: 1px solid color-mix(in srgb, currentColor 26%, transparent);
+  border-radius: 18px;
+  padding: 5px 12px;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.assistie-panel button:hover:not(:disabled) {
+  background: color-mix(
+    in srgb,
+    var(--color-logo-primary, #ec8fbc) 15%,
+    transparent
+  );
+}
+.assistie-panel button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.assistie-panel button:focus-visible,
+.assistie-panel summary:focus-visible {
+  outline: 2px solid var(--accent-ink);
+  outline-offset: 3px;
+}
+.assistie-panel ::selection {
+  background: var(--note-highlight);
+  color: inherit;
+}
+@media (max-width: 400px) {
+  .assistie-panel {
+    padding: 14px;
+  }
+  .assistie-panel footer {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
+.assistie-ask label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.assistie-panel {
+  position: relative;
+}
+.assistie-invite-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 6px 0 10px;
+}
+.assistie-invite-row small {
+  flex-basis: 100%;
+}
+.assistie-profile-note {
+  font-size: 11px;
+  color: var(--note-quiet);
+  margin: 0 0 12px;
+}
+.assistie-connection {
+  margin: 0 0 10px;
+}
+.assistie-connection p {
+  margin: 5px 0 0;
+  font-size: 11px;
+  color: color-mix(in srgb, currentColor 78%, transparent);
+}
+.assistie-consent {
+  position: fixed;
+  z-index: 4;
+  top: 30px;
+  right: 32px;
+  width: 350px;
+  max-width: calc(100% - 24px);
+  max-height: calc(100vh - 72px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  scrollbar-color: color-mix(in srgb, currentColor 30%, transparent) transparent;
+  background: var(--color-background, #2c2b29);
+  color: var(--color-text, #fbfbfb);
+  border: 1px solid color-mix(in srgb, currentColor 16%, transparent);
+  border-radius: 12px;
+  box-shadow: 0 12px 32px -8px rgb(0 0 0 / 0.28);
+  padding: 21px;
+  font-size: 13px;
+  line-height: 1.55;
+}
+.assistie-consent-profile {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.assistie-consent-profile small {
+  margin-left: auto;
+  font-size: 11px;
+  text-align: right;
+}
+.assistie-consent h3 {
+  font-size: 21px;
+  line-height: 1.2;
+  font-weight: 550;
+  letter-spacing: -0.02em;
+  margin: 0 0 10px;
+}
+.assistie-consent > p {
+  color: color-mix(in srgb, currentColor 70%, transparent);
+  margin: 0;
+}
+.assistie-consent fieldset {
+  border: 0;
+  margin: 20px 0 0;
+  padding: 0;
+  min-width: 0;
+}
+.assistie-consent legend {
+  color: color-mix(in srgb, currentColor 70%, transparent);
+  font-size: 12px;
+  margin-bottom: 10px;
+}
+.assistie-consent label {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  font-size: 13px;
+  margin-bottom: 12px;
+  cursor: pointer;
+}
+.assistie-consent input {
+  accent-color: var(--color-logo-primary, #f28cbb);
+  width: 15px;
+  height: 15px;
+  margin-top: 3px;
+  flex-shrink: 0;
+}
+.assistie-consent label small {
+  display: block;
+  font-size: 12px;
+  line-height: 1.5;
+  color: color-mix(in srgb, currentColor 70%, transparent);
+  margin-top: 2px;
+}
+.assistie-consent-pointers {
+  border-top: 1px solid color-mix(in srgb, currentColor 14%, transparent);
+  padding-top: 14px;
+  margin-top: 4px;
+}
+.assistie-consent-note {
+  font-size: 12px;
+  color: color-mix(in srgb, currentColor 70%, transparent);
+  margin: 15px 0 0;
+}
+.assistie-consent-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 20px;
+}
+.assistie-consent-actions button {
+  font-size: 13px;
+  padding: 9px 11px;
+  border-radius: 8px;
+  border: 0;
+}
+.assistie-consent-actions .assistie-primary {
+  background: var(--color-logo-primary, #f28cbb);
+  color: #2a1a22;
+  font-weight: 600;
+}
+/* A lighter tint of the theme pink, not a second hex. */
+.assistie-consent-actions .assistie-primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-logo-primary, #f28cbb) 82%, white);
+}
+.assistie-consent h3:focus-visible,
+.assistie-consent input:focus-visible {
+  outline: 2px solid var(--accent-ink);
+  outline-offset: 3px;
+}
+
+.assistie-consent > .assistie-consent-profile,
+.assistie-consent > h3,
+.assistie-consent > p {
+  flex-shrink: 0;
+}
+.assistie-consent form {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.assistie-consent-options {
+  overflow-y: auto;
+  min-height: 0;
+  scrollbar-color: color-mix(in srgb, currentColor 30%, transparent) transparent;
+}
+.assistie-consent-actions {
+  flex-shrink: 0;
+}
+
+.assistie-plugin {
+  margin-block-end: 20px;
+  padding-block: 12px;
+  border-block-end: 1px solid color-mix(in srgb, currentColor 18%, transparent);
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.assistie-plugin summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.assistie-plugin summary span {
+  display: inline-block;
+  margin-inline-start: 12px;
+  font-weight: 400;
+  color: var(--accent-ink);
+}
+.assistie-plugin p {
+  max-width: 70ch;
+  margin-block: 10px;
+}
+.assistie-plugin form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-block: 12px;
+}
+/* Fields are underlines, as the ask field: no boxes. With no placeholder the line is
+   the field's only edge, so it is stronger than the ask field's (at least 3:1). */
+.assistie-plugin input {
+  min-width: 140px;
+  flex: 1;
+  background: transparent;
+  color: inherit;
+  border: 0;
+  border-bottom: 1px solid color-mix(in srgb, currentColor 55%, transparent);
+  border-radius: 0;
+  padding: 7px 0;
+  caret-color: var(--color-logo-primary, #f28cbb);
+}
+.assistie-plugin input:focus-visible {
+  outline: 0;
+  border-bottom: 2px solid var(--accent-ink);
+  padding-bottom: 6px;
+}
+.assistie-plugin :focus-visible {
+  outline: 2px solid var(--accent-ink);
+  outline-offset: 3px;
+}
+.assistie-cite {
+  color: color-mix(in srgb, currentColor 82%, transparent);
+  margin: 2px 0 6px;
+}
+/* Focus rings and small accent text: ink on light surfaces, where pink is too faint; pink on dark. */
+.assistie-panel,
+.assistie-consent,
+.assistie-plugin {
+  --accent-ink: var(--color-text);
+}
+.assistie-panel {
+  --rate-ink: color-mix(in srgb, currentColor 64%, transparent);
+  --rate-ink-strong: currentColor;
+  --rate-band: var(--note-highlight);
+}
+/* On dark, the highlighter reads as a soft wash behind the whole line. Dark is
+   the OS setting unless Handy's own theme is forced (data-theme, see theme.css). */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .assistie-panel,
+  :root:not([data-theme="light"]) .assistie-consent,
+  :root:not([data-theme="light"]) .assistie-plugin {
+    --note-highlight: color-mix(
+      in srgb,
+      var(--color-logo-primary, #f28cbb) 26%,
+      transparent
+    );
+    --accent-ink: var(--color-logo-primary, #f28cbb);
+  }
+  :root:not([data-theme="light"]) .assistie-panel mark {
+    background-size: 100% 100%;
+    background-position: 0 0;
+    border-radius: 3px;
+  }
+}
+:root[data-theme="dark"] .assistie-panel,
+:root[data-theme="dark"] .assistie-consent,
+:root[data-theme="dark"] .assistie-plugin {
+  --note-highlight: color-mix(
+    in srgb,
+    var(--color-logo-primary, #f28cbb) 26%,
+    transparent
+  );
+  --accent-ink: var(--color-logo-primary, #f28cbb);
+}
+:root[data-theme="dark"] .assistie-panel mark {
+  background-size: 100% 100%;
+  background-position: 0 0;
+  border-radius: 3px;
+}
+/* Terra's mark: a short stroke of Handy-pink highlighter. */
+.terra-mark {
+  display: inline-block;
+  width: 14px;
+  height: 5px;
+  border-radius: 2px;
+  background: var(--color-logo-primary, #f28cbb);
+  flex-shrink: 0;
+}

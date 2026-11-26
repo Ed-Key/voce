@@ -5,6 +5,357 @@
 
 
 export const commands = {
+async startCallNotes() : Promise<Result<CallSession | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("start_call_notes") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async stopCallNotes() : Promise<Result<CallSession | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("stop_call_notes") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async callNotesSnapshot() : Promise<Result<CallSession | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("call_notes_snapshot") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async callDetectionSnapshot() : Promise<DetectionSnapshot> {
+    return await TAURI_INVOKE("call_detection_snapshot");
+},
+async callInvitationSnapshot() : Promise<Result<Offer | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("call_invitation_snapshot") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async previewCallInvitation() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("preview_call_invitation") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async layoutCallInvitation(height: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("layout_call_invitation", { height }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async respondCallInvitation(id: number, choice: Choice) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("respond_call_invitation", { id, choice }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async takeCallInvitationDestination() : Promise<Result<Destination | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("take_call_invitation_destination") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async saveCallNotes(sessionId: string, notes: string) : Promise<Result<CallSession | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("save_call_notes", { sessionId, notes }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async listSavedCalls() : Promise<Result<CallSession[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_saved_calls") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async callAnalysis(sessionId: string) : Promise<Result<View, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("call_analysis", { sessionId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async callObservatory(sessionId: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("call_observatory", { sessionId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async deleteCall(sessionId: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("delete_call", { sessionId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * The Memory page's one way into the store. Importing stays out of the app on purpose.
+ */
+async memoryCommand(command: string, payload: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("memory_command", { command, payload }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async processCall(sessionId: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("process_call", { sessionId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async processSavedCallLocalFeed(sessionId: string, liveStyle: boolean) : Promise<Result<LocalReplay, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("process_saved_call_local_feed", { sessionId, liveStyle }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async cancelCallProcessing(sessionId: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cancel_call_processing", { sessionId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async saveSavedCallNotes(sessionId: string, notes: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("save_saved_call_notes", { sessionId, notes }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async saveCallSummary(sessionId: string, expectedJob: string, text: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("save_call_summary", { sessionId, expectedJob, text }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async assistieFixtureSnapshot(runId: string | null) : Promise<Result<Snapshot, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("assistie_fixture_snapshot", { runId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async createAssistieFixture() : Promise<Result<Snapshot, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("create_assistie_fixture") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async createCallAssistie(sessionId: string) : Promise<Result<Snapshot, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("create_call_assistie", { sessionId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async savedCallAssistie(sessionId: string, offset: number) : Promise<Result<Snapshot, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("saved_call_assistie", { sessionId, offset }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async copyAssistieConnection(runId: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("copy_assistie_connection", { runId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async connectAssistieMeeting(runId: string, proactive: boolean) : Promise<Result<Snapshot, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("connect_assistie_meeting", { runId, proactive }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async connectTerraMeeting(runId: string, proactive: boolean) : Promise<Result<Snapshot, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("connect_terra_meeting", { runId, proactive }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async rateTerraReply(runId: string, eventId: string | null, rating: string, note: string) : Promise<Result<Snapshot, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("rate_terra_reply", { runId, eventId, rating, note }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async retryAssistieConnection(runId: string) : Promise<Result<Snapshot, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("retry_assistie_connection", { runId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async assistiePluginStatus() : Promise<Result<PluginStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("assistie_plugin_status") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async configureAssistiePlugin(key: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("configure_assistie_plugin", { key }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async startAssistiePlugin() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("start_assistie_plugin") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async disconnectAssistiePlugin() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("disconnect_assistie_plugin") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async appendAssistieTranscript(runId: string, batch: TranscriptBatch) : Promise<Result<Snapshot, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("append_assistie_transcript", { runId, batch }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async stopAssistieFixture(runId: string) : Promise<Result<Snapshot, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("stop_assistie_fixture", { runId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async askAssistieFixture(runId: string, question: string) : Promise<Result<Snapshot, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ask_assistie_fixture", { runId, question }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async controlAssistieFixture(runId: string, sharing: boolean, proactive: boolean) : Promise<Result<Snapshot, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("control_assistie_fixture", { runId, sharing, proactive }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * The notch chat's history. `before` pages back, `after` fetches new arrivals; at most one is set.
+ */
+async assistieNotchFeed(runId: string, before: number | null, after: number | null, limit: number) : Promise<Result<FeedPage, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("assistie_notch_feed", { runId, before, after, limit }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async recordNotchEvents(runId: string, events: NotchEvent[]) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("record_notch_events", { runId, events }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Reply numbers the user has seen (or dismissed on purpose) in this run, so a reload keeps the unseen count.
+ */
+async notchSeenReplies(runId: string) : Promise<Result<number[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("notch_seen_replies", { runId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async setAssistieNotchVisible(visible: boolean) : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_assistie_notch_visible", { visible }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async assistieNotchVisible() : Promise<boolean> {
+    return await TAURI_INVOKE("assistie_notch_visible");
+},
+async layoutAssistieNotch(mode: NotchLayout, lines: number | null, reduceMotion: boolean | null) : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("layout_assistie_notch", { mode, lines, reduceMotion }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async editAssistieNotch(editing: boolean) : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("edit_assistie_notch", { editing }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async changeBinding(id: string, binding: string) : Promise<Result<BindingResponse, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_binding", { id, binding }) };
@@ -378,6 +729,14 @@ async changeVadBackendSetting(backend: VadBackend) : Promise<Result<null, string
 async changeFillerWordRemovalEnabledSetting(enabled: boolean) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_filler_word_removal_enabled_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async changeCallInvitationsEnabledSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_call_invitations_enabled_setting", { enabled }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -990,7 +1349,16 @@ whats_new_last_seen_version?: string; selected_model?: string; onboarding_comple
  * Which input channel to use on the selected microphone device.
  * None means "average all channels" (original behavior).
  */
-selected_channel?: number | null; clamshell_microphone?: string | null; selected_output_device?: string | null; translate_to_english?: boolean; selected_language?: string; overlay_position?: OverlayPosition; debug_mode?: boolean; log_level?: LogLevel; custom_words?: string[]; model_unload_timeout?: ModelUnloadTimeout; word_correction_threshold?: number; history_limit?: number; recording_retention_period?: RecordingRetentionPeriod; paste_method?: PasteMethod; clipboard_handling?: ClipboardHandling; auto_submit?: boolean; auto_submit_key?: AutoSubmitKey; post_process_enabled?: boolean; post_process_provider_id?: string; post_process_providers?: PostProcessProvider[]; post_process_api_keys?: SecretMap; post_process_models?: Partial<{ [key in string]: string }>; post_process_prompts?: LLMPrompt[]; post_process_selected_prompt_id?: string | null; mute_while_recording?: boolean; append_trailing_space?: boolean; app_language?: string; theme?: Theme; experimental_enabled?: boolean; lazy_stream_close?: boolean; keyboard_implementation?: KeyboardImplementation; show_tray_icon?: boolean; paste_delay_ms?: number; paste_delay_after_ms?: number; 
+selected_channel?: number | null; clamshell_microphone?: string | null; selected_output_device?: string | null; translate_to_english?: boolean; selected_language?: string; overlay_position?: OverlayPosition; debug_mode?: boolean; log_level?: LogLevel; custom_words?: string[]; model_unload_timeout?: ModelUnloadTimeout; word_correction_threshold?: number; history_limit?: number; recording_retention_period?: RecordingRetentionPeriod; paste_method?: PasteMethod; clipboard_handling?: ClipboardHandling; auto_submit?: boolean; auto_submit_key?: AutoSubmitKey; post_process_enabled?: boolean; 
+/**
+ * Run the cleanup LLM on the recognized text while the key is held, so
+ * release only finishes the last sentence. Local custom provider only.
+ */
+early_cleanup?: boolean; 
+/**
+ * Show the "meeting detected" prompt when a call app is using the mic.
+ */
+call_invitations_enabled?: boolean; post_process_provider_id?: string; post_process_providers?: PostProcessProvider[]; post_process_api_keys?: SecretMap; post_process_models?: Partial<{ [key in string]: string }>; post_process_prompts?: LLMPrompt[]; post_process_selected_prompt_id?: string | null; mute_while_recording?: boolean; append_trailing_space?: boolean; app_language?: string; theme?: Theme; experimental_enabled?: boolean; lazy_stream_close?: boolean; keyboard_implementation?: KeyboardImplementation; show_tray_icon?: boolean; paste_delay_ms?: number; paste_delay_after_ms?: number; 
 /**
  * Debug-gated ("beta") receipt-sequenced paste: restore the clipboard only
  * after the target app actually reads the transcript, instead of after a
@@ -1019,9 +1387,13 @@ vad_backend?: VadBackend;
  */
 overlay_style?: OverlayStyle }
 export type AudioDevice = { index: string; name: string; is_default: boolean }
+export type AudioStatus = { managed: boolean; expires_at: number | null; expired: boolean }
 export type AutoSubmitKey = "enter" | "ctrl_enter" | "cmd_enter"
 export type AvailableAccelerators = { transcribe: string[]; ort: string[]; gpu_devices: GpuDeviceOption[] }
 export type BindingResponse = { success: boolean; binding: ShortcutBinding | null; error: string | null }
+export type Brief = { text: string; source: string; marker: string }
+export type CallApp = "discord" | "face_time" | "zoom" | "google_meet"
+export type CallSession = { id: string; title: string; started_at: string; active: boolean; mic_yielded: boolean; mic_state?: MicState; mic_gaps?: MicGap[]; detected_app?: CallApp | null; elapsed_ms: number; notes: string; system: TrackStats; mic_segments: MicSegment[]; error: string | null; recovered_at?: string | null }
 /**
  * Script applied to Mandarin and Cantonese output. Other languages are never
  * converted.
@@ -1031,8 +1403,12 @@ export type ChineseScript =
  * Keep whatever script the model produced.
  */
 "as_transcribed" | "simplified" | "traditional"
+export type Choice = "start" | "dismiss" | "open"
 export type ClipboardHandling = "dont_modify" | "copy_to_clipboard"
+export type Connection = { id: string; phase: string; requested_at_ms: number; last_attempt_ms: number; attempts: number; claimed_at_ms: number | null; ready_at_ms: number | null }
 export type CustomSounds = { start: boolean; stop: boolean }
+export type Destination = { session_id: string | null; assistie_run: string | null }
+export type DetectionSnapshot = { available: boolean; apps: CallApp[]; possible_end: boolean; dictating: boolean }
 export type EngineType = 
 /**
  * Any GGML/GGUF model loaded through transcribe-cpp (Whisper, Parakeet,
@@ -1040,6 +1416,12 @@ export type EngineType =
  * the file, so this one variant covers the whole transcribe-cpp family.
  */
 "TranscribeCpp" | "Parakeet" | "Moonshine" | "MoonshineStreaming" | "SenseVoice" | "GigaAM" | "Canary" | "Cohere"
+export type Entry = { id: number; source: string; start_ms: number; end_ms: number; text: string }
+/**
+ * One page of a run's replies for the notch chat, oldest first, numbered like reply-NNNNNN.json.
+ */
+export type FeedItem = { n: number; reply: Reply; question: Question | null }
+export type FeedPage = { run_id: string; reply_count: number; items: FeedItem[]; more_before: boolean }
 export type GpuDeviceOption = { id: string; name: string; total_vram_mb: number }
 export type HistoryEntry = { id: number; file_name: string; timestamp: number; saved: boolean; title: string; transcription_text: string; post_processed_text: string | null; post_process_prompt: string | null; post_process_requested: boolean }
 export type HistoryUpdatePayload = { action: "added"; entry: HistoryEntry } | { action: "updated"; entry: HistoryEntry } | { action: "deleted"; id: number } | { action: "toggled"; id: number }
@@ -1058,7 +1440,15 @@ export type KeyboardDiagnosticReport = { secure_input_enabled: boolean; culprit_
 key_down: number; key_up: number; flags_changed: number; mouse: number; duration_ms: number }
 export type KeyboardImplementation = "tauri" | "handy_keys"
 export type LLMPrompt = { id: string; name: string; prompt: string }
+export type LocalReplay = { run_id?: string; complete: boolean; entries: number; feed_segments: number; feed_sequence: number; version: number; local_only: boolean; sharing: boolean; live_style: boolean; following: boolean; processing_ms: number; first_update_ms: number | null; max_lag_ms: number | null }
 export type LogLevel = "trace" | "debug" | "info" | "warn" | "error"
+/**
+ * The user's mark on a Terra reply (or a missed moment) and whether its private case was saved.
+ */
+export type Mark = { id: string; event_id: string | null; rating: string; note: string; at_ms: number; status: string; error?: string | null }
+export type MicGap = { start_ms: number; resumed_ms: number | null }
+export type MicSegment = { file: string; offset_ms: number; stats: TrackStats }
+export type MicState = "stopped" | "starting" | "live" | "yielded" | "failed"
 export type ModelInfo = { id: string; name: string; description: string; filename: string; source: ModelSource; size_mb: number; is_downloaded: boolean; is_downloading: boolean; partial_size: number; is_directory: boolean; engine_type: EngineType; accuracy_score: number; speed_score: number; supports_translation: boolean; is_recommended: boolean; supported_languages: string[]; supports_language_selection: boolean; is_custom: boolean; supports_streaming: boolean; supports_language_detection: boolean }
 export type ModelLoadStatus = { is_loaded: boolean; current_model: string | null }
 /**
@@ -1086,6 +1476,9 @@ sha256: string | null } } |
  */
 "Local"
 export type ModelUnloadTimeout = "never" | "immediately" | "min_2" | "min_5" | "min_10" | "min_15" | "hour_1" | "sec_15"
+export type NotchEvent = { n: number; action: string }
+export type NotchLayout = "compact" | "peek" | "expanded"
+export type Offer = { id: number; app: CallApp; fictional: boolean }
 export type OrtAcceleratorSetting = "auto" | "cpu" | "cuda" | "directml" | "rocm"
 export type OverlayPosition = "top" | "bottom"
 /**
@@ -1098,9 +1491,14 @@ export type OverlayStyle = "none" | "minimal" | "live"
 export type PaginatedHistory = { entries: HistoryEntry[]; has_more: boolean }
 export type PasteMethod = "ctrl_v" | "direct" | "none" | "shift_insert" | "ctrl_shift_v" | "external_script"
 export type PermissionAccess = "allowed" | "denied" | "unknown"
+export type PluginStatus = { phase: string; running: boolean; fictional_only: boolean; installation_id: string | null; subscriptions: number | null }
+export type Point = { text: string; sources: number[] }
 export type PostProcessProvider = { id: string; label: string; base_url: string; allow_base_url_edit?: boolean; models_endpoint?: string | null; supports_structured_output?: boolean }
+export type Question = { id: number; text: string; version: number; status: string }
 export type RecordingRetentionPeriod = "never" | "preserve_limit" | "days_3" | "weeks_2" | "months_3"
+export type Reply = { event_id: string; question_id: number | null; kind: string; version: number; snapshot_at_ms?: number | null; source_status?: string | null; received_at_ms?: number | null; text: string; quotes: Source[] }
 export type SecretMap = Partial<{ [key in string]: string }>
+export type Sections = { overview: Point[]; decisions: Point[]; action_items: Point[]; open_questions: Point[] }
 export type SecureInputStatus = { 
 /**
  * Secure input is currently enabled (live check)
@@ -1152,7 +1550,25 @@ export type ShortcutActivation =
  */
 "hold_or_toggle"
 export type ShortcutBinding = { id: string; name: string; description: string; default_binding: string; current_binding: string }
+export type Snapshot = { run_id: string; status: string; transport?: string | null; connection?: Connection | null; sharing: boolean; proactive: boolean; deadline_ms: number | null; startup_deadline_ms: number | null; version: number; feed_sequence?: number; local_only?: boolean; call_id?: string | null; feed_error?: string | null; archive?: boolean; history_offset?: number; history_more?: boolean; question_limit?: number | null; questions_asked?: number | null; context_brief: Brief | null; questions: Question[]; replies: Reply[]; marks?: Mark[]; reply_count?: number | null; 
+/**
+ * Your own newest line is still being spoken; pointer peeks wait for it.
+ */
+you_speaking?: boolean; 
+/**
+ * Terra is working on a question or deciding on a pointer.
+ */
+terra_working?: boolean; terra_working_since_ms?: number | null }
 export type SoundTheme = "marimba" | "pop" | "custom"
+export type Source = { id: string; text: string; 
+/**
+ * "you" or "other_audio" for transcript lines; absent for seeded notes.
+ */
+source?: string | null; 
+/**
+ * Time from the start of the call.
+ */
+start_ms?: number | null }
 /**
  * Phase of the streaming overlay card, emitted to drive its UI state.
  */
@@ -1185,14 +1601,20 @@ export type StreamTextEvent = { committed: string; tentative: string }
  * Semantic kind of "working" phase, used to localize the spinner label.
  */
 export type StreamWorkKind = "transcribing" | "polishing"
+export type Summary = { job_id: string; recording_key: string; notes_key: string; transcript_version: string; sections: Sections; edited_text: string | null }
 /**
  * UI appearance mode. `System` follows the OS `prefers-color-scheme`; `Light`
  * and `Dark` force one of the two palettes Handy already ships.
  */
 export type Theme = "system" | "light" | "dark"
+export type TrackStats = { samples: number; peak: number; sample_rate: number; error: string | null }
 export type TranscribeAcceleratorSetting = "auto" | "cpu" | "gpu"
+export type Transcript = { recording_key: string; version?: string; complete: boolean; entries: Entry[]; warnings: string[] }
+export type TranscriptBatch = { sequence: number; base_version: number; segments: TranscriptSegment[]; remove_ids: string[] }
+export type TranscriptSegment = { id: string; source: string; start_ms: number; end_ms: number; text: string; finalized: boolean }
 export type TypingTool = "auto" | "wtype" | "kwtype" | "dotool" | "ydotool" | "xdotool"
 export type VadBackend = "silero" | "earshot"
+export type View = { audio: AudioStatus; status: string; error: string | null; done: number; total: number; transcript: Transcript | null; summary: Summary | null; outdated: boolean }
 export type WindowsMicrophonePermissionStatus = { supported: boolean; overall_access: PermissionAccess; device_access: PermissionAccess; app_access: PermissionAccess; desktop_app_access: PermissionAccess }
 
 /** tauri-specta globals **/

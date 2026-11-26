@@ -1,0 +1,538 @@
+@font-face {
+  font-family: Figtree;
+  src: url("./Figtree.ttf");
+  font-display: swap;
+}
+:root {
+  font-family:
+    Figtree,
+    -apple-system,
+    sans-serif;
+  color: var(--fg);
+  color-scheme: dark;
+  font-size: 14px;
+  /* The notch continues the camera housing, so it is black on any desktop. */
+  --raise: #1f1f1e;
+  --deep: #151515;
+  --line: #33332f;
+  --fg: #ebebe8;
+  --mute: #8a8a84;
+  --faint: #5e5e59;
+  --terra: #4fd1b5;
+  --you: #f0a050;
+  --them: #a487ff;
+  --warn: #e8b04c;
+  --serif: ui-serif, "New York", Georgia, serif;
+}
+* {
+  box-sizing: border-box;
+}
+html,
+body,
+#root {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+}
+button,
+input {
+  font: inherit;
+}
+button {
+  color: inherit;
+  cursor: pointer;
+}
+button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+button:focus-visible,
+input:focus-visible,
+.notch-chat:focus-visible {
+  outline: 2px solid var(--terra);
+  outline-offset: -2px;
+}
+::selection {
+  background: #24584d;
+  color: #fff;
+}
+.assistie-notch {
+  width: 100%;
+  height: 100%;
+  background: #000;
+  border-radius: 0 0 18px 18px;
+  padding: 0 8px 4px;
+  overflow: hidden;
+  transition: border-radius 240ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.assistie-notch.expanded {
+  border-radius: 0 0 24px 24px;
+  padding-bottom: 10px;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Header: Terra's mark left of the camera, the level meter (or controls) right of it. */
+.notch-handle {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--camera-width) minmax(0, 1fr);
+  align-items: center;
+  width: 100%;
+  height: var(--header-height);
+  flex: none;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  text-align: left;
+  padding: 0;
+}
+.notch-identity,
+.notch-status,
+.notch-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.notch-identity {
+  justify-content: center;
+}
+.expanded .notch-identity {
+  justify-content: flex-start;
+  padding-left: 16px;
+}
+.notch-identity strong {
+  font-family: var(--serif);
+  font-size: 17px;
+  font-weight: 400;
+}
+.notch-status {
+  justify-content: center;
+}
+.notch-controls {
+  justify-content: flex-end;
+  gap: 2px;
+  padding-right: 4px;
+}
+.notch-controls button {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--mute);
+}
+.notch-controls button:hover,
+.notch-controls button[aria-pressed="true"] {
+  color: var(--fg);
+  background: var(--raise);
+}
+.notch-saved {
+  font-size: 12px;
+  color: var(--mute);
+}
+
+/* Terra's mark: a teal dot that becomes a spinner, a count, or a check. */
+.terra-mark {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--terra);
+  box-shadow: 0 0 8px rgb(79 209 181 / 0.55);
+  flex: none;
+}
+[data-phase="stopped"] .terra-mark,
+[data-phase="waiting"] .terra-mark {
+  background: var(--faint);
+  box-shadow: none;
+}
+[data-phase="failed"] .terra-mark {
+  background: var(--warn);
+  box-shadow: none;
+}
+[data-phase="unavailable"] .terra-mark {
+  background: transparent;
+  border: 1.5px solid var(--mute);
+  box-shadow: none;
+}
+/* Thinking: Terra's dotted thought orb (the thinking-orbs package, MIT). It draws
+   light grey ink; sepia plus a hue turn tints it Terra teal without touching the drawing. */
+.terra-orb {
+  display: block;
+  flex: none;
+  filter: sepia(1) saturate(4) hue-rotate(118deg) brightness(1.05);
+}
+/* In the header it is drawn larger than its box, so it reads without widening the notch. */
+.notch-identity .terra-orb {
+  transform: scale(1.3);
+}
+.terra-check {
+  color: var(--terra);
+}
+/* Level bars: Handy's dictation waveform in Terra teal. Dim dots when the call is quiet. */
+.notch-wave {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 14px;
+}
+.notch-wave i {
+  width: 2px;
+  min-height: 2px;
+  border-radius: 1px;
+  background: var(--terra);
+  opacity: 0.35;
+  transition:
+    height 80ms linear,
+    opacity 180ms ease;
+}
+.notch-wave.live i {
+  opacity: 1;
+}
+
+/* Peek: the whole line inside the black notch, with "+N" when more arrived. */
+.notch-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  animation: notch-reveal 180ms cubic-bezier(0.16, 1, 0.3, 1);
+  font-size: 13px;
+  line-height: 18px;
+  margin: 2px 10px 8px;
+  color: var(--fg);
+}
+.notch-line::before {
+  content: "";
+  flex: none;
+  width: 6px;
+  height: 6px;
+  margin-top: 6px;
+  border-radius: 50%;
+  background: var(--terra);
+}
+.notch-line.earlier::before {
+  background: var(--mute);
+}
+.notch-line-text {
+  min-width: 0;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 16;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+/* Measures the wrap at the peek's full width, which the window only reaches after it grows. */
+.notch-measure {
+  position: fixed;
+  top: -9999px;
+  left: 0;
+  visibility: hidden;
+  font-size: 13px;
+  line-height: 18px;
+  overflow-wrap: anywhere;
+}
+.notch-more {
+  flex: none;
+  margin-left: 6px;
+  padding: 1px 7px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--raise);
+  color: var(--mute);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+@keyframes notch-reveal {
+  from {
+    opacity: 0;
+    transform: scale(0.92);
+  }
+}
+
+/* Open: a chat, oldest at the top, newest by the input. */
+.notch-detail {
+  position: relative;
+  width: calc(var(--surface-width) - 16px);
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  opacity: 0;
+  transform: scale(0.92);
+  transform-origin: top center;
+  pointer-events: none;
+  transition:
+    opacity 100ms ease-out,
+    transform 140ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.expanded .notch-detail {
+  opacity: 1;
+  transform: scale(1);
+  pointer-events: auto;
+  transition-duration: 160ms, 220ms;
+}
+.notch-chat {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 22px 18px 14px;
+  /* Older messages slide under a fade at the top. */
+  mask-image: linear-gradient(to bottom, transparent 0, #000 22px);
+  scrollbar-width: thin;
+  scrollbar-color: #3a3a37 transparent;
+}
+.notch-chat::-webkit-scrollbar {
+  width: 3px;
+}
+.notch-chat::-webkit-scrollbar-thumb {
+  background: #3a3a37;
+  border-radius: 2px;
+}
+/* One quiet system: a colored name, then a plain rounded bubble, with room to breathe. */
+.chat-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 18px;
+}
+/* Pointers in a row share one name, so they sit together. */
+.chat-group:has(> .chat-row:first-child) {
+  margin-top: -10px;
+}
+.chat-label {
+  display: block;
+  margin: 0 0 6px 2px;
+  font-size: 12.5px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.chat-group > .chat-label {
+  margin-bottom: -2px;
+}
+.chat-label.terra {
+  color: var(--terra);
+}
+.chat-label.you {
+  color: var(--you);
+}
+.chat-row {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+.chat-row.you {
+  align-items: flex-end;
+  margin-bottom: 18px;
+}
+.chat-row.you .chat-label {
+  margin-right: 2px;
+}
+.chat-bubble {
+  max-width: 80%;
+  margin: 0;
+  padding: 11px 15px;
+  border-radius: 16px;
+  background: var(--raise);
+  font-size: 14px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  text-wrap: pretty;
+}
+.chat-bubble p {
+  margin: 0;
+}
+/* A cited line reads as part of the reply: a thin speaker-colored rule, no box. */
+.chat-quote {
+  margin: 10px 0 0;
+  padding-left: 10px;
+  border-left: 2px solid var(--line);
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--mute);
+}
+.chat-quote small {
+  display: block;
+  margin-bottom: 1px;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+.chat-quote.them {
+  border-left-color: var(--them);
+}
+.chat-quote.them small {
+  color: var(--them);
+}
+.chat-quote.you {
+  border-left-color: var(--you);
+}
+.chat-quote.you small {
+  color: var(--you);
+}
+.chat-more {
+  margin-top: 8px;
+  padding: 1px 7px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--mute);
+  font-size: 11px;
+}
+/* Ratings and status stay out of the way, beside the bubble, until you reach for them. */
+.chat-tools {
+  position: absolute;
+  top: 4px;
+  right: -6px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--faint);
+  --rate-ink: var(--faint);
+  --rate-ink-strong: var(--fg);
+  --rate-band: rgb(79 209 181 / 0.55);
+}
+.chat-tools .terra-rate {
+  margin-top: 0;
+  opacity: 0;
+  transition: opacity 120ms;
+}
+.chat-row:hover .terra-rate,
+.chat-row:focus-within .terra-rate,
+.terra-rate:has([aria-pressed="true"]) {
+  opacity: 1;
+}
+/* "Mark not saved" needs room, so a failed row drops under the bubble instead of covering it. */
+.chat-tools:has(.terra-rate-failed) {
+  position: static;
+  margin-top: 4px;
+}
+.terra-rate:has(.terra-rate-failed) {
+  opacity: 1;
+}
+/* The space beside a bubble fits the ratings; the clock needs its own. */
+.chat-row:has(.chat-status) .chat-bubble {
+  max-width: calc(80% - 20px);
+}
+.chat-status {
+  display: grid;
+  place-items: center;
+}
+.chat-failed {
+  margin-top: 4px;
+  font-size: 11.5px;
+  color: var(--warn);
+}
+.chat-typing {
+  display: flex;
+  padding: 7px 11px;
+}
+.chat-new {
+  position: absolute;
+  left: 50%;
+  bottom: 54px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--raise);
+  color: var(--fg);
+  font-size: 11.5px;
+}
+.notch-empty {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--mute);
+  margin: 0;
+}
+
+/* Bottom row: pointers on or off, the ask field, stop sharing. */
+.notch-bottom {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 10px 2px;
+  flex: none;
+}
+.notch-round {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--raise);
+  color: var(--mute);
+}
+.notch-round:hover:not(:disabled) {
+  color: var(--fg);
+}
+.notch-bottom form {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  height: 36px;
+  padding: 0 4px 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+}
+.notch-bottom form:focus-within {
+  border-color: rgb(79 209 181 / 0.6);
+}
+.notch-bottom input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: 0;
+  color: var(--fg);
+  font-size: 13px;
+  caret-color: var(--terra);
+}
+.notch-bottom input::placeholder {
+  color: var(--faint);
+}
+.notch-bottom input:focus-visible {
+  outline: 0;
+}
+.notch-bottom form button {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--raise);
+  color: var(--fg);
+}
+.notch-bottom form button:disabled {
+  background: transparent;
+  opacity: 0;
+}
+.notch-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+    transition: none !important;
+  }
+  .notch-detail {
+    transform: none;
+  }
+}

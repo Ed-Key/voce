@@ -1,6 +1,6 @@
 use crate::settings::PostProcessProvider;
 use log::{debug, error, info};
-use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE, REFERER, USER_AGENT};
+use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE, USER_AGENT};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashSet;
@@ -128,6 +128,8 @@ struct ChatCompletionResponse {
 #[derive(Debug, Deserialize)]
 struct ChatChoice {
     message: ChatMessageResponse,
+    #[serde(default)]
+    finish_reason: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -141,15 +143,8 @@ fn build_headers(provider: &PostProcessProvider, api_key: &str) -> Result<Header
 
     // Common headers
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-    headers.insert(
-        REFERER,
-        HeaderValue::from_static("https://github.com/cjpais/Handy"),
-    );
-    headers.insert(
-        USER_AGENT,
-        HeaderValue::from_static("Handy/1.0 (+https://github.com/cjpais/Handy)"),
-    );
-    headers.insert("X-Title", HeaderValue::from_static("Handy"));
+    headers.insert(USER_AGENT, HeaderValue::from_static("Voce/1.0"));
+    headers.insert("X-Title", HeaderValue::from_static("Voce"));
 
     // Provider-specific auth headers
     if !api_key.is_empty() {
@@ -316,6 +311,31 @@ pub async fn send_chat_completion(
     .await
 }
 
+/// Ask the model to continue a partial answer: the request ends with an
+/// assistant message holding `assistant_prefix`, and the reply is only the rest.
+/// Local llama.cpp servers (LM Studio) support this; most cloud APIs do not.
+/// A reply cut off by the token limit is an error, never a partial result.
+pub async fn send_chat_completion_continuing(
+    provider: &PostProcessProvider,
+    api_key: String,
+    model: &str,
+    prompt: String,
+    assistant_prefix: String,
+    disable_reasoning: bool,
+) -> Result<Option<String>, String> {
+    chat_completion_request(
+        provider,
+        api_key,
+        model,
+        prompt,
+        None,
+        None,
+        disable_reasoning,
+        Some(assistant_prefix),
+    )
+    .await
+}
+
 /// Send a chat completion request with structured output support.
 /// When json_schema is provided, uses structured outputs mode.
 /// system_prompt is used as the system message when provided.
@@ -335,6 +355,31 @@ pub async fn send_chat_completion_with_schema(
     json_schema: Option<Value>,
     disable_reasoning: bool,
 ) -> Result<Option<String>, String> {
+    chat_completion_request(
+        provider,
+        api_key,
+        model,
+        user_content,
+        system_prompt,
+        json_schema,
+        disable_reasoning,
+        None,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn chat_completion_request(
+    provider: &PostProcessProvider,
+    api_key: String,
+    model: &str,
+    user_content: String,
+    system_prompt: Option<String>,
+    json_schema: Option<Value>,
+    disable_reasoning: bool,
+    assistant_prefix: Option<String>,
+) -> Result<Option<String>, String> {
+    let continuing = assistant_prefix.is_some();
     let base_url = provider.base_url.trim_end_matches('/');
     let url = format!("{}/chat/completions", base_url);
 
@@ -361,6 +406,13 @@ pub async fn send_chat_completion_with_schema(
         role: "user".to_string(),
         content: user_content,
     });
+
+    if let Some(prefix) = assistant_prefix {
+        messages.push(ChatMessage {
+            role: "assistant".to_string(),
+            content: prefix,
+        });
+    }
 
     // Build response_format if schema is provided
     let response_format = json_schema.map(|schema| ResponseFormat {
@@ -455,10 +507,70 @@ pub async fn send_chat_completion_with_schema(
         .await
         .map_err(|e| report_reqwest_error("Failed to parse API response", &e))?;
 
-    Ok(completion
-        .choices
-        .first()
-        .and_then(|choice| choice.message.content.clone()))
+    let Some(choice) = completion.choices.first() else {
+        return Ok(None);
+    };
+    if continuing && choice.finish_reason.as_deref() == Some("length") {
+        return Err("continuation was cut off by the token limit".to_string());
+    }
+    Ok(choice.message.content.clone())
+}
+
+/// True when `base_url` points at this machine (localhost, 127.0.0.0/8, ::1).
+pub fn is_loopback(base_url: &str) -> bool {
+    let Ok(url) = reqwest::Url::parse(base_url) else {
+        return false;
+    };
+    let Some(host) = url.host_str() else {
+        return false;
+    };
+    let host = host.trim_start_matches('[').trim_end_matches(']');
+    host.eq_ignore_ascii_case("localhost")
+        || host
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback())
+}
+
+/// Ask the endpoint to load `model` by requesting one token. Local servers such
+/// as LM Studio load a model on its first request (about 8 s for s1-mini after
+/// a restart or an idle unload), so this runs when dictation starts instead of
+/// when the cleanup is needed. The reply is ignored.
+pub async fn warm_up(
+    provider: &PostProcessProvider,
+    api_key: String,
+    model: &str,
+) -> Result<(), String> {
+    if !is_loopback(&provider.base_url) {
+        return Err("Warm-up is only sent to a model server on this Mac".into());
+    }
+    let url = format!(
+        "{}/chat/completions",
+        provider.base_url.trim_end_matches('/')
+    );
+    // No redirects and no proxy: the loopback check above must hold for where
+    // the request really goes.
+    let client = reqwest::Client::builder()
+        .default_headers(build_headers(provider, &api_key)?)
+        .redirect(reqwest::redirect::Policy::none())
+        .no_proxy() // connect to this Mac directly, never through a proxy
+        .build()
+        .map_err(|e| report_reqwest_error("Failed to build HTTP client", &e))?;
+    let body = serde_json::json!({
+        "model": model,
+        "messages": [{ "role": "user", "content": "ok" }],
+        "max_tokens": 1,
+        "stream": false,
+    });
+    let response = client
+        .post(&url)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| report_reqwest_error("Warm-up request failed", &e))?;
+    if !response.status().is_success() {
+        return Err(format!("Warm-up returned status {}", response.status()));
+    }
+    Ok(())
 }
 
 /// Fetch available models from an OpenAI-compatible API
@@ -730,5 +842,21 @@ mod tests {
         assert!(is_known_rejected(&key));
         // A different model on the same endpoint is tracked separately
         assert!(!is_known_rejected(&endpoint_key(&deepseek, "other-model")));
+    }
+}
+
+#[cfg(test)]
+mod loopback_tests {
+    use super::is_loopback;
+
+    #[test]
+    fn only_this_machine_counts_as_loopback() {
+        assert!(is_loopback("http://localhost:1234/v1"));
+        assert!(is_loopback("http://127.0.0.1:1234/v1"));
+        assert!(is_loopback("http://[::1]:8080/v1"));
+        assert!(!is_loopback("https://api.deepseek.com/v1"));
+        assert!(!is_loopback("http://localhost.evil.com/v1"));
+        assert!(!is_loopback("http://192.168.1.5:1234/v1"));
+        assert!(!is_loopback("not a url"));
     }
 }

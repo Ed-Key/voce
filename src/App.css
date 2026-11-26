@@ -1,5 +1,9 @@
 @import "tailwindcss";
 @import "./styles/theme.css";
+@import "@fontsource-variable/newsreader/opsz.css";
+@import "@fontsource-variable/manrope/index.css";
+@import "@fontsource/jetbrains-mono/400.css";
+@import "@fontsource/jetbrains-mono/500.css";
 
 /* Register the shared color tokens (src/styles/theme.css) as Tailwind
    utilities */
@@ -15,8 +19,16 @@
   --color-error: var(--color-error);
 }
 
+/* The main window takes the simulation's ground and text; the recording overlay keeps Handy's own. */
+:root,
+:root[data-theme] {
+  --color-background: var(--bg);
+  --color-text: var(--fg);
+}
+
 :root {
   /* Typography */
+  font-family: var(--font-body);
   font-size: 15px;
   line-height: 24px;
   font-weight: 400;

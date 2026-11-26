@@ -1,8 +1,18 @@
+import { CallNotes } from "./calls/CallNotes";
+import { MemoryPage } from "./calls/MemoryPage";
 import React from "react";
 import { useTranslation } from "react-i18next";
-import { Cog, FlaskConical, History, Info, Sparkles, Cpu } from "lucide-react";
-import HandyTextLogo from "./icons/HandyTextLogo";
-import HandyHand from "./icons/HandyHand";
+import {
+  Box,
+  Cog,
+  FlaskConical,
+  History,
+  Info,
+  Sparkles,
+  Cpu,
+  Phone,
+} from "lucide-react";
+import VoceGlyph from "./icons/VoceGlyph";
 import { useSettings } from "../hooks/useSettings";
 import {
   GeneralSettings,
@@ -24,6 +34,8 @@ interface IconProps {
   [key: string]: any;
 }
 
+const APP_NAME = "Voce";
+
 interface SectionConfig {
   labelKey: string;
   icon: React.ComponentType<IconProps>;
@@ -34,8 +46,20 @@ interface SectionConfig {
 export const SECTIONS_CONFIG = {
   general: {
     labelKey: "sidebar.general",
-    icon: HandyHand,
+    icon: VoceGlyph,
     component: GeneralSettings,
+    enabled: () => true,
+  },
+  calls: {
+    labelKey: "calls.sidebar",
+    icon: Phone,
+    component: CallNotes,
+    enabled: () => true,
+  },
+  memory: {
+    labelKey: "memory.sidebar",
+    icon: Box,
+    component: MemoryPage,
     enabled: () => true,
   },
   history: {
@@ -93,9 +117,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
     .map(([id, config]) => ({ id: id as SidebarSection, ...config }));
 
   return (
-    <div className="flex flex-col w-40 h-full border-e border-mid-gray/20 items-center px-2">
-      <HandyTextLogo width={120} className="m-4" />
-      <div className="flex flex-col w-full items-center gap-1 pt-2 border-t border-mid-gray/20">
+    <div className="flex flex-col w-46 shrink-0 h-full px-4 pt-4">
+      <div
+        className="px-3 pb-3.5 text-[28px] leading-tight tracking-[-0.01em]"
+        style={{ fontFamily: "var(--font-display)" }}
+      >
+        {APP_NAME}
+      </div>
+      <div className="flex flex-col w-full gap-0.5">
         {availableSections.map((section) => {
           const Icon = section.icon;
           const isActive = activeSection === section.id;
@@ -103,14 +132,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
           return (
             <div
               key={section.id}
-              className={`flex gap-2 items-center p-2 w-full rounded-lg cursor-pointer transition-colors ${
+              className="flex gap-2.5 items-center px-3 py-[7px] w-full rounded-lg cursor-pointer transition-colors"
+              style={
                 isActive
-                  ? "bg-logo-primary/80"
-                  : "hover:bg-mid-gray/20 hover:opacity-100 opacity-85"
-              }`}
+                  ? { background: "var(--raise)", color: "var(--fg)" }
+                  : { color: "var(--mute)" }
+              }
               onClick={() => onSectionChange(section.id)}
             >
-              <Icon width={24} height={24} className="shrink-0" />
+              <Icon width={16} height={16} className="shrink-0" />
               <p
                 className="text-sm font-medium truncate"
                 title={t(section.labelKey)}

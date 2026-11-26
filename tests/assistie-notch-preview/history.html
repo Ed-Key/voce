@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Handy historical answers preview</title>
+  </head>
+  <body
+    style="
+      margin: 0;
+      background: #2c2a29;
+      color: #f3f0ed;
+      font: 14px system-ui;
+      color-scheme: dark;
+    "
+  >
+    <main style="max-width: 960px; margin: 32px auto; padding: 0 24px">
+      <h1 style="font-size: 22px">Saved answers in Assistie</h1>
+      <p>
+        Production panel with fictional data. No recording or ChatGPT
+        connection.
+      </p>
+      <p>
+        <button id="advance">Move sources outside the live window</button>
+        <button id="revise">Revise the transcript</button>
+      </p>
+      <div id="root"></div>
+    </main>
+    <script type="module" src="./history.tsx"></script>
+  </body>
+</html>

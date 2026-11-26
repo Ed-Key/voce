@@ -75,3 +75,26 @@
   --color-warning: var(--dark-color-warning);
   --color-error: var(--dark-color-error);
 }
+
+/* The simulation's palette for the main window's call surfaces, with the same light/dark override rules as above. */
+:root {
+  --font-display: "Newsreader Variable", "Iowan Old Style", Georgia, serif;
+  --font-body: "Manrope Variable", "Avenir Next", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+  --bg: #f7f5f0; --panel: #ffffff; --raise: #f0ede7; --line: #e2ded6; --fg: #1d1c1a; --mute: #77736b; --faint: #aaa59b;
+  --you: #d4801f; --them: #6b4fd8; --agent: #138f78; --ok: #2f9c5c; --warn: #b9800f; --bad: #c43d35; --glow: 0.4;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #151515; --panel: #1f1f1e; --raise: #292927; --line: #33332f; --fg: #ebebe8; --mute: #8a8a84; --faint: #5e5e59;
+    --you: #f0a050; --them: #a487ff; --agent: #4fd1b5; --ok: #5bd18b; --warn: #e8b04c; --bad: #e5534b; --glow: 1;
+  }
+}
+:root[data-theme="light"] {
+  --bg: #f7f5f0; --panel: #ffffff; --raise: #f0ede7; --line: #e2ded6; --fg: #1d1c1a; --mute: #77736b; --faint: #aaa59b;
+  --you: #d4801f; --them: #6b4fd8; --agent: #138f78; --ok: #2f9c5c; --warn: #b9800f; --bad: #c43d35; --glow: 0.4;
+}
+:root[data-theme="dark"] {
+  --bg: #151515; --panel: #1f1f1e; --raise: #292927; --line: #33332f; --fg: #ebebe8; --mute: #8a8a84; --faint: #5e5e59;
+  --you: #f0a050; --them: #a487ff; --agent: #4fd1b5; --ok: #5bd18b; --warn: #e8b04c; --bad: #e5534b; --glow: 1;
+}

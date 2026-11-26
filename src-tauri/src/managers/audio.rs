@@ -821,6 +821,9 @@ impl AudioRecordingManager {
         let mut state = self.state.lock().unwrap();
 
         if let RecordingState::Idle = *state {
+            self.app_handle
+                .state::<crate::calls::CallNotesManager>()
+                .acquire_dictation()?;
             // Cancel any pending lazy close (no-op in always-on mode, where
             // closes are never scheduled).
             self.close_generation.fetch_add(1, Ordering::SeqCst);
@@ -832,30 +835,48 @@ impl AudioRecordingManager {
             if let Err(e) = self.start_microphone_stream() {
                 let msg = format!("{e}");
                 error!("Failed to open microphone stream: {msg}");
+                if matches!(*self.mode.lock().unwrap(), MicrophoneMode::OnDemand) {
+                    self.stop_microphone_stream();
+                }
+                self.app_handle
+                    .state::<crate::calls::CallNotesManager>()
+                    .release_dictation();
                 return Err(msg);
             }
 
-            if let Some(rec) = self.recorder.lock().unwrap().as_ref() {
-                match rec.start(vad_policy) {
-                    Ok(receiver) => {
-                        let generation = self.capture_generation.fetch_add(1, Ordering::AcqRel) + 1;
-                        *self.is_recording.lock().unwrap() = true;
-                        self.set_state(
-                            &mut state,
-                            RecordingState::Recording {
-                                binding_id: binding_id.to_string(),
-                            },
-                        );
-                        debug!("Recording requested for binding {binding_id}");
-                        return Ok(RecordingReadiness {
-                            receiver,
-                            generation,
-                        });
-                    }
-                    Err(error) => return Err(format!("Failed to start recorder: {error}")),
+            // Release the recorder lock before closing a failed stream.
+            let result = self
+                .recorder
+                .lock()
+                .unwrap()
+                .as_ref()
+                .map(|rec| rec.start(vad_policy));
+            let message = match result {
+                Some(Ok(receiver)) => {
+                    let generation = self.capture_generation.fetch_add(1, Ordering::AcqRel) + 1;
+                    *self.is_recording.lock().unwrap() = true;
+                    self.set_state(
+                        &mut state,
+                        RecordingState::Recording {
+                            binding_id: binding_id.to_string(),
+                        },
+                    );
+                    debug!("Recording requested for binding {binding_id}");
+                    return Ok(RecordingReadiness {
+                        receiver,
+                        generation,
+                    });
                 }
+                Some(Err(error)) => format!("Failed to start recorder: {error}"),
+                None => "Recorder not available".to_string(),
+            };
+            if matches!(*self.mode.lock().unwrap(), MicrophoneMode::OnDemand) {
+                self.stop_microphone_stream();
             }
-            Err("Recorder not available".to_string())
+            self.app_handle
+                .state::<crate::calls::CallNotesManager>()
+                .release_dictation();
+            Err(message)
         } else {
             Err("Already recording".to_string())
         }
@@ -1027,7 +1048,7 @@ impl AudioRecordingManager {
                 };
 
                 *self.is_recording.lock().unwrap() = false;
-                self.set_state(&mut self.state.lock().unwrap(), RecordingState::Idle);
+                let mut final_state = self.state.lock().unwrap();
 
                 // In on-demand mode, close the mic (lazily if the setting is enabled)
                 if matches!(*self.mode.lock().unwrap(), MicrophoneMode::OnDemand) {
@@ -1037,6 +1058,12 @@ impl AudioRecordingManager {
                         self.stop_microphone_stream();
                     }
                 }
+
+                self.app_handle
+                    .state::<crate::calls::CallNotesManager>()
+                    .release_dictation();
+                self.set_state(&mut final_state, RecordingState::Idle);
+                drop(final_state);
 
                 if self.was_cancelled_since(cancel_generation) {
                     debug!("Recording stop cancelled; discarding captured samples");
@@ -1074,8 +1101,7 @@ impl AudioRecordingManager {
 
         match *state {
             RecordingState::Recording { .. } => {
-                self.set_state(&mut state, RecordingState::Idle);
-                drop(state);
+                self.set_state(&mut state, RecordingState::Stopping);
 
                 if let Some(rec) = self.recorder.lock().unwrap().as_ref() {
                     let _ = rec.stop(); // Discard the result
@@ -1091,6 +1117,10 @@ impl AudioRecordingManager {
                         self.stop_microphone_stream();
                     }
                 }
+                self.app_handle
+                    .state::<crate::calls::CallNotesManager>()
+                    .release_dictation();
+                self.set_state(&mut state, RecordingState::Idle);
             }
             RecordingState::Stopping => {
                 debug!("Cancellation requested while recording is stopping");

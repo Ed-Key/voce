@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "call-invitation",
+  "description": "Advisory meeting invitation without filesystem, store, clipboard or microphone plugin access",
+  "windows": ["call_invitation"],
+  "permissions": ["core:default"]
+}

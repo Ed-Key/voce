@@ -1,0 +1,16 @@
+import assert from "node:assert/strict";
+import { PeekClock } from "../../src/notch/timing.ts";
+const clock = new PeekClock();
+clock.restart();clock.resume(100);
+assert.equal(clock.left(2100),4000);
+clock.pause(2100);
+assert.equal(clock.left(50000),4000,"reading pause cannot consume the remaining budget");
+clock.resume(50000);clock.resume(51000);
+assert.equal(clock.left(52000),2000,"repeat resume cannot extend the deadline");
+clock.pause(52000);clock.resume(90000);
+assert.equal(clock.left(92001),0,"resumed timer expires only after its remaining budget");
+clock.restart();clock.resume(100000);clock.pause(101000);clock.restart();
+assert.equal(clock.left(500000),6000,"a new reply gets one fresh paused budget");
+clock.clear();clock.resume(900000);
+assert.equal(clock.left(900001),0,"Stop cannot revive the timer");
+console.log("6 reading-time budget assertions passed");

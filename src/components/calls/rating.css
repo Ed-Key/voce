@@ -1,0 +1,44 @@
+/* The user's marks on a Terra reply: a quiet row after the cited quote. Each surface sets
+   --rate-ink (resting), --rate-ink-strong (hover, selected) and --rate-band (highlighter).
+   Two classes deep so the panel's general button style (a bordered pill) does not apply. */
+.terra-rate {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-top: 6px;
+  margin-inline-start: -7px;
+}
+.terra-rate .terra-rate-button {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  font: inherit;
+  color: var(--rate-ink);
+  cursor: pointer;
+}
+.terra-rate .terra-rate-button:hover:not([aria-disabled="true"]),
+.terra-rate .terra-rate-button[aria-pressed="true"] {
+  color: var(--rate-ink-strong);
+  background-color: transparent;
+}
+/* Selected: the same highlighter stroke as the cited words, under the icon. */
+.terra-rate .terra-rate-button[aria-pressed="true"] {
+  background-image: linear-gradient(var(--rate-band), var(--rate-band));
+  background-repeat: no-repeat;
+  background-size: 18px 6px;
+  background-position: 50% 80%;
+}
+.terra-rate .terra-rate-button[aria-disabled="true"] {
+  opacity: 0.45;
+  cursor: default;
+}
+.terra-rate-failed {
+  margin-inline-start: 6px;
+  font-size: 11px;
+  color: var(--rate-ink-strong);
+}

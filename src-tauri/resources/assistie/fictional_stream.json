@@ -1,0 +1,20 @@
+{
+  "batches": [
+    {
+      "sequence": 1,
+      "base_version": 1,
+      "segments": [
+        {"id":"launch","source":"you","start_ms":10000,"end_ms":14000,"text":"We have now agreed to move the fictional launch to Monday, provided accessibility passes.","finalized":true},
+        {"id":"review","source":"other_audio","start_ms":15000,"end_ms":19000,"text":"Lee will own the accessibility review. It has not passed yet.","finalized":true}
+      ]
+    },
+    {
+      "sequence": 2,
+      "base_version": 2,
+      "segments": [
+        {"id":"review","source":"other_audio","start_ms":15000,"end_ms":19000,"text":"Lee completed the accessibility review. It passed.","finalized":true},
+        {"id":"draft","source":"you","start_ms":20000,"end_ms":23000,"text":"The fictional announcement draft still says Tuesday, with no conditions.","finalized":true}
+      ]
+    }
+  ]
+}

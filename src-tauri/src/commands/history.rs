@@ -41,6 +41,10 @@ pub async fn get_audio_file_path(
     file_name: String,
 ) -> Result<String, String> {
     let path = history_manager.get_audio_file_path(&file_name);
+    if !path.exists() {
+        // The audio expired (recording retention); the text is still there.
+        return Err("This recording's audio is no longer kept".to_string());
+    }
     path.to_str()
         .ok_or_else(|| "Invalid file path".to_string())
         .map(|s| s.to_string())
@@ -93,8 +97,13 @@ pub async fn retry_history_entry_transcription(
         return Err("Recording contains no speech".to_string());
     }
 
-    let processed =
-        process_transcription_output(&app, &transcription, entry.post_process_requested).await;
+    let processed = process_transcription_output(
+        &app,
+        &transcription,
+        entry.post_process_requested,
+        (crate::early_cleanup::Release::Whole("whole"), None),
+    )
+    .await;
     history_manager
         .update_transcription(
             id,

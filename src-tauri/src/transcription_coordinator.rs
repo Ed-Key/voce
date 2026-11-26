@@ -554,6 +554,7 @@ impl TranscriptionCoordinator {
                                 if let Some(effect) = state.on_grace_expired() {
                                     run_effect(&app, &mut state, effect);
                                 }
+                                publish_call_priority(&app, &state);
                                 continue;
                             }
                             Err(mpsc::RecvTimeoutError::Disconnected) => break,
@@ -580,7 +581,9 @@ impl TranscriptionCoordinator {
                             }
                         }
                     }
+                    publish_call_priority(&app, &state);
                 }
+                publish_call_priority(&app, &state);
                 debug!("Transcription coordinator exited");
             }));
             if let Err(e) = result {
@@ -668,12 +671,21 @@ impl TranscriptionCoordinator {
     }
 }
 
+fn publish_call_priority(app: &AppHandle, state: &CoordinatorState) {
+    if let Some(ai) = app.try_state::<crate::calls::analysis::CallAiManager>() {
+        ai.foreground(state.stage != Stage::Idle);
+    }
+}
+
 fn run_effect(app: &AppHandle, state: &mut CoordinatorState, effect: Effect) {
     match effect {
         Effect::Start {
             binding_id,
             hotkey_string,
         } => {
+            if let Some(ai) = app.try_state::<crate::calls::analysis::CallAiManager>() {
+                ai.foreground(true);
+            }
             let started = start(app, &binding_id, &hotkey_string);
             state.on_start_result(&binding_id, started);
         }

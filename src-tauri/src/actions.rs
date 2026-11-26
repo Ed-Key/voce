@@ -7,14 +7,16 @@ use crate::managers::history::HistoryManager;
 use crate::managers::model::ModelManager;
 use crate::managers::transcription::StreamWorkKind;
 use crate::managers::transcription::TranscriptionManager;
-use crate::settings::{get_settings, AppSettings, OverlayStyle, APPLE_INTELLIGENCE_PROVIDER_ID};
+use crate::settings::{
+    get_settings, AppSettings, OverlayStyle, PostProcessProvider, APPLE_INTELLIGENCE_PROVIDER_ID,
+};
 use crate::shortcut;
 use crate::tray::{set_tray_state, TrayIconState};
 use crate::utils::{
     self, show_processing_overlay, show_recording_overlay, show_transcribing_overlay,
 };
 use crate::TranscriptionCoordinator;
-use log::{debug, error, warn};
+use log::{debug, error, info, warn};
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::future::Future;
@@ -118,12 +120,16 @@ fn should_use_streaming_overlay(style: OverlayStyle, is_streaming: bool) -> bool
     style == OverlayStyle::Live && is_streaming
 }
 
-async fn post_process_transcription(settings: &AppSettings, transcription: &str) -> Option<String> {
-    if is_blank_transcription(transcription) {
-        debug!("Post-processing skipped because the transcription is empty");
-        return None;
-    }
+pub(crate) struct PostProcessTarget {
+    pub provider: PostProcessProvider,
+    pub api_key: String,
+    pub model: String,
+    pub prompt: String,
+}
 
+/// Provider, model and prompt for post-processing, or None (with the reason
+/// logged) when post-processing cannot run with these settings.
+pub(crate) fn post_process_target(settings: &AppSettings) -> Option<PostProcessTarget> {
     let provider = match settings.active_post_process_provider().cloned() {
         Some(provider) => provider,
         None => {
@@ -174,16 +180,40 @@ async fn post_process_transcription(settings: &AppSettings, transcription: &str)
         return None;
     }
 
-    debug!(
-        "Starting LLM post-processing with provider '{}' (model: {})",
-        provider.id, model
-    );
-
     let api_key = settings
         .post_process_api_keys
         .get(&provider.id)
         .cloned()
         .unwrap_or_default();
+
+    Some(PostProcessTarget {
+        provider,
+        api_key,
+        model,
+        prompt,
+    })
+}
+
+pub(crate) async fn post_process_transcription(
+    settings: &AppSettings,
+    transcription: &str,
+) -> Option<String> {
+    if is_blank_transcription(transcription) {
+        debug!("Post-processing skipped because the transcription is empty");
+        return None;
+    }
+
+    let PostProcessTarget {
+        provider,
+        api_key,
+        model,
+        prompt,
+    } = post_process_target(settings)?;
+
+    debug!(
+        "Starting LLM post-processing with provider '{}' (model: {})",
+        provider.id, model
+    );
 
     // Ask these providers to skip reasoning/thinking — post-processing rarely
     // benefits from it and it adds seconds of latency. llm_client picks the
@@ -344,24 +374,155 @@ async fn post_process_transcription(settings: &AppSettings, transcription: &str)
     }
 }
 
+/// Minimum gap between two warm-up requests.
+const WARM_UP_EVERY: Duration = Duration::from_secs(20);
+static LAST_WARM_UP: std::sync::Mutex<Option<Instant>> = std::sync::Mutex::new(None);
+
+/// True (and records `now`) when no warm-up was sent in the last WARM_UP_EVERY.
+fn warm_up_due(last: &mut Option<Instant>, now: Instant) -> bool {
+    if last.is_some_and(|at| now.saturating_duration_since(at) < WARM_UP_EVERY) {
+        return false;
+    }
+    *last = Some(now);
+    true
+}
+
+/// Make the local cleanup model load now, so the first cleanup does not wait
+/// for it. Only for the local custom provider (never a paid cloud API), at most
+/// once every WARM_UP_EVERY, fire and forget.
+/// Only for a custom provider whose endpoint is on this Mac.
+pub(crate) fn warm_post_process_model(settings: &AppSettings) {
+    if !settings.post_process_enabled {
+        return;
+    }
+    let Some(target) = post_process_target(settings) else {
+        return;
+    };
+    // Only a model server on this Mac: a custom provider can also point at a
+    // paid cloud API, which must never get unrequested calls.
+    if target.provider.id != "custom" || !crate::llm_client::is_loopback(&target.provider.base_url)
+    {
+        return;
+    }
+    if !LAST_WARM_UP
+        .lock()
+        .map(|mut last| warm_up_due(&mut last, Instant::now()))
+        .unwrap_or(false)
+    {
+        return;
+    }
+    tauri::async_runtime::spawn(async move {
+        let started = Instant::now();
+        let result = tokio::time::timeout(
+            Duration::from_secs(30),
+            crate::llm_client::warm_up(&target.provider, target.api_key, &target.model),
+        )
+        .await;
+        match result {
+            Ok(Ok(())) => debug!("Cleanup model warm-up took {:?}", started.elapsed()),
+            Ok(Err(e)) => debug!("Cleanup model warm-up failed: {}", e),
+            Err(_) => debug!("Cleanup model warm-up timed out"),
+        }
+    });
+}
+
+/// Early cleanup's release step: today's legacy request for `transcription`,
+/// with `locked` (the start of an earlier cleaned output) as a partial
+/// assistant answer, so the model writes only the rest. Returns locked + rest.
+async fn post_process_continuing(
+    settings: &AppSettings,
+    transcription: &str,
+    locked: &str,
+) -> Option<String> {
+    let target = post_process_target(settings)?;
+    let prompt = target.prompt.replace("${output}", transcription);
+    let request = crate::llm_client::send_chat_completion_continuing(
+        &target.provider,
+        target.api_key,
+        &target.model,
+        prompt,
+        locked.to_string(),
+        true,
+    );
+    match tokio::time::timeout(std::time::Duration::from_secs(20), request).await {
+        Ok(Ok(Some(reply))) => {
+            let reply = strip_invisible_chars(strip_think_block(&reply));
+            if reply.trim().is_empty() {
+                warn!("Early cleanup continuation returned no text");
+                return None;
+            }
+            let joined = crate::early_cleanup::join(locked, &reply);
+            if joined.is_none() {
+                warn!("Early cleanup continuation started over; using whole-text cleanup");
+            }
+            joined
+        }
+        Ok(Ok(None)) => {
+            warn!("Early cleanup continuation returned no text");
+            None
+        }
+        Ok(Err(e)) => {
+            warn!("Early cleanup continuation failed: {}", e);
+            None
+        }
+        Err(_) => {
+            warn!("Early cleanup continuation timed out");
+            None
+        }
+    }
+}
+
 pub(crate) struct ProcessedTranscription {
     pub final_text: String,
     pub post_processed_text: Option<String>,
     pub post_process_prompt: Option<String>,
+    /// How cleanup ran, for the timing log: "whole", "exact", "cont", or the
+    /// reason early cleanup fell back to whole ("no_cache", "not_prefix", ...).
+    pub cleanup_path: &'static str,
 }
 
+/// `early` is what early cleanup left for this transcription (see
+/// early_cleanup::EarlyCleanup::resolve); its settings snapshot, when present,
+/// is used so the release request matches the requests made during speech.
 pub(crate) async fn process_transcription_output(
     app: &AppHandle,
     transcription: &str,
     post_process: bool,
+    early: (crate::early_cleanup::Release, Option<Arc<AppSettings>>),
 ) -> ProcessedTranscription {
-    let settings = get_settings(app);
+    use crate::early_cleanup::Release;
+    let (release, early_settings) = early;
+    let settings = early_settings.map_or_else(|| get_settings(app), |s| (*s).clone());
     let mut final_text = transcription.to_string();
     let mut post_processed_text: Option<String> = None;
     let mut post_process_prompt: Option<String> = None;
+    let mut cleanup_path = "whole";
 
     if post_process {
-        if let Some(processed_text) = post_process_transcription(&settings, &final_text).await {
+        let processed = match release {
+            Release::Exact(output) => {
+                cleanup_path = "exact";
+                Some(output)
+            }
+            Release::Continue { locked, cache_age } => {
+                debug!("Early cleanup: continuing from a cache {:?} old", cache_age);
+                match post_process_continuing(&settings, &final_text, &locked).await {
+                    Some(text) => {
+                        cleanup_path = "cont";
+                        Some(text)
+                    }
+                    None => {
+                        cleanup_path = "cont_failed";
+                        post_process_transcription(&settings, &final_text).await
+                    }
+                }
+            }
+            Release::Whole(reason) => {
+                cleanup_path = reason;
+                post_process_transcription(&settings, &final_text).await
+            }
+        };
+        if let Some(processed_text) = processed {
             post_processed_text = Some(processed_text.clone());
             final_text = processed_text;
 
@@ -381,6 +542,7 @@ pub(crate) async fn process_transcription_output(
         final_text,
         post_processed_text,
         post_process_prompt,
+        cleanup_path,
     }
 }
 
@@ -446,6 +608,8 @@ impl ShortcutAction for TranscribeAction {
             VadPolicy::Offline
         };
         if model_supports_streaming {
+            app.state::<Arc<crate::early_cleanup::EarlyCleanup>>()
+                .begin(settings.clone(), self.post_process);
             tm.start_stream();
         }
         let plan_elapsed = plan_started.elapsed();
@@ -531,6 +695,10 @@ impl ShortcutAction for TranscribeAction {
         if recording_error.is_none() {
             // Dynamically register the cancel shortcut in a separate task to avoid deadlock
             shortcut::register_cancel_shortcut(app);
+            // Recording is running: now load the cleanup model in the background.
+            if self.post_process {
+                warm_post_process_model(&settings);
+            }
         } else {
             // Starting failed (for example due to blocked microphone permissions).
             // Revert UI state so we don't stay stuck in the recording overlay.
@@ -602,6 +770,9 @@ impl ShortcutAction for TranscribeAction {
         let binding_id = binding_id.to_string(); // Clone binding_id for the async task
         let post_process = self.post_process;
         let cancel_generation = rm.cancel_generation();
+        let early = Arc::clone(&app.state::<Arc<crate::early_cleanup::EarlyCleanup>>());
+        // Release: no new early cleanup requests from here on.
+        early.close();
 
         tauri::async_runtime::spawn(async move {
             let _guard = FinishGuard(ah.clone(), Arc::clone(&tm));
@@ -612,6 +783,7 @@ impl ShortcutAction for TranscribeAction {
 
             let stop_recording_time = Instant::now();
             if let Some(samples) = rm.stop_recording(&binding_id, cancel_generation) {
+                let stop_rec_d = stop_recording_time.elapsed();
                 debug!(
                     "Recording stopped and samples retrieved in {:?}, sample count: {}",
                     stop_recording_time.elapsed(),
@@ -648,6 +820,8 @@ impl ShortcutAction for TranscribeAction {
                     // running, finalize it and use its text (all audio was already
                     // fed to the stream); otherwise batch-transcribe the samples.
                     let transcription_time = Instant::now();
+                    let audio_s = sample_count as f32 / 16_000.0;
+                    let mut streamed = false;
                     let transcription_result = match tm.finalize_stream() {
                         // A finalized stream with usable text wins. An empty result
                         // (no active stream, produced nothing, or a finalize error
@@ -655,12 +829,17 @@ impl ShortcutAction for TranscribeAction {
                         // transcription of the same audio. A finalize timeout is
                         // surfaced instead — the worker may still hold the engine,
                         // so a batch fallback would contend with it.
-                        Ok(Some(text)) if !text.trim().is_empty() => Ok(text),
+                        Ok(Some(text)) if !text.trim().is_empty() => {
+                            streamed = true;
+                            Ok(text)
+                        }
                         Ok(_) => tm.transcribe(samples),
                         Err(err) => Err(err),
                     };
+                    let asr_d = transcription_time.elapsed();
 
                     // Await WAV save and verify
+                    let wav_wait_time = Instant::now();
                     let wav_saved = match wav_handle.await {
                         Ok(Ok(())) => {
                             match crate::audio_toolkit::verify_wav_file(
@@ -683,6 +862,7 @@ impl ShortcutAction for TranscribeAction {
                             false
                         }
                     };
+                    let wav_wait_d = wav_wait_time.elapsed();
 
                     if rm.was_cancelled_since(cancel_generation) {
                         debug!("Transcription operation cancelled before output handling");
@@ -706,8 +886,20 @@ impl ShortcutAction for TranscribeAction {
                                     show_processing_overlay(&ah);
                                 }
                             }
+                            let cleanup_time = Instant::now();
+                            let early_release = if streamed {
+                                early.resolve(&transcription)
+                            } else {
+                                early.cancel();
+                                (crate::early_cleanup::Release::Whole("batch"), None)
+                            };
                             let Some(processed) = complete_unless_cancelled(
-                                process_transcription_output(&ah, &transcription, post_process),
+                                process_transcription_output(
+                                    &ah,
+                                    &transcription,
+                                    post_process,
+                                    early_release,
+                                ),
                                 || rm.was_cancelled_since(cancel_generation),
                             )
                             .await
@@ -717,6 +909,7 @@ impl ShortcutAction for TranscribeAction {
                                 set_tray_state(&ah, TrayIconState::Idle);
                                 return;
                             };
+                            let cleanup_d = cleanup_time.elapsed();
 
                             if rm.was_cancelled_since(cancel_generation) {
                                 debug!("Transcription operation cancelled before paste");
@@ -726,6 +919,7 @@ impl ShortcutAction for TranscribeAction {
                             }
 
                             // Save to history if WAV was saved
+                            let history_time = Instant::now();
                             if wav_saved {
                                 if let Err(err) = hm.save_entry(
                                     file_name,
@@ -737,6 +931,7 @@ impl ShortcutAction for TranscribeAction {
                                     error!("Failed to save history entry: {}", err);
                                 }
                             }
+                            let history_d = history_time.elapsed();
 
                             if processed.final_text.is_empty() {
                                 utils::hide_recording_overlay(&ah);
@@ -745,20 +940,41 @@ impl ShortcutAction for TranscribeAction {
                                 let ah_clone = ah.clone();
                                 let paste_time = Instant::now();
                                 let final_text = processed.final_text;
+                                let cleanup_path = processed.cleanup_path;
                                 let rm_for_paste = Arc::clone(&rm);
+                                let wait_for_paste = ah.config().identifier == crate::APP_ID;
+                                let (paste_done, pasted) = tokio::sync::oneshot::channel::<()>();
                                 ah.run_on_main_thread(move || {
                                     if rm_for_paste.was_cancelled_since(cancel_generation) {
                                         debug!("Transcription operation cancelled before paste");
                                         utils::hide_recording_overlay(&ah_clone);
                                         set_tray_state(&ah_clone, TrayIconState::Idle);
+                                        let _ = paste_done.send(());
                                         return;
                                     }
 
+                                    let paste_queue_d = paste_time.elapsed();
                                     match utils::paste(final_text, ah_clone.clone()) {
-                                        Ok(()) => debug!(
-                                            "Text pasted successfully in {:?}",
-                                            paste_time.elapsed()
-                                        ),
+                                        Ok(()) => {
+                                            let ms = |d: std::time::Duration| d.as_millis();
+                                            // One line per dictation for measuring release-to-paste.
+                                            // total starts at stop(), i.e. after the 50 ms RELEASE_GRACE.
+                                            info!(
+                                                "dictation_timing total_ms={} stop_rec_ms={} asr_ms={} wav_wait_ms={} cleanup_ms={} history_ms={} paste_queue_ms={} paste_ms={} audio_s={:.1} streamed={} post_process={} cleanup_path={}",
+                                                ms(stop_time.elapsed()),
+                                                ms(stop_rec_d),
+                                                ms(asr_d),
+                                                ms(wav_wait_d),
+                                                ms(cleanup_d),
+                                                ms(history_d),
+                                                ms(paste_queue_d),
+                                                ms(paste_time.elapsed() - paste_queue_d),
+                                                audio_s,
+                                                streamed,
+                                                post_process,
+                                                cleanup_path
+                                            );
+                                        }
                                         Err(e) => {
                                             error!("Failed to paste transcription: {}", e);
                                             let _ = ah_clone.emit("paste-error", ());
@@ -766,12 +982,17 @@ impl ShortcutAction for TranscribeAction {
                                     }
                                     utils::hide_recording_overlay(&ah_clone);
                                     set_tray_state(&ah_clone, TrayIconState::Idle);
+                                    let _ = paste_done.send(());
                                 })
                                 .unwrap_or_else(|e| {
                                     error!("Failed to run paste on main thread: {:?}", e);
                                     utils::hide_recording_overlay(&ah);
                                     set_tray_state(&ah, TrayIconState::Idle);
                                 });
+                                // Keep the dev call worker paused through queued paste completion.
+                                if wait_for_paste {
+                                    let _ = pasted.await;
+                                }
                             }
                         }
                         Err(err) => {
@@ -784,6 +1005,7 @@ impl ShortcutAction for TranscribeAction {
                                 return;
                             }
 
+                            early.cancel();
                             error!("Transcription failed: {}", err);
                             // Surface the failure to the UI (toast). The full
                             // message is also in handy.log via the line above.
@@ -880,6 +1102,24 @@ pub static ACTION_MAP: Lazy<HashMap<String, Arc<dyn ShortcutAction>>> = Lazy::ne
     );
     map
 });
+
+#[cfg(test)]
+mod warm_up_tests {
+    use super::*;
+
+    #[test]
+    fn warm_up_is_sent_at_most_once_per_window() {
+        let mut last = None;
+        let t = Instant::now();
+        assert!(warm_up_due(&mut last, t));
+        assert!(!warm_up_due(&mut last, t + Duration::from_secs(5)));
+        assert!(!warm_up_due(
+            &mut last,
+            t + WARM_UP_EVERY - Duration::from_millis(1)
+        ));
+        assert!(warm_up_due(&mut last, t + WARM_UP_EVERY));
+    }
+}
 
 #[cfg(test)]
 mod tests {

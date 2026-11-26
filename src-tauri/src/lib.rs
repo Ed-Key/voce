@@ -1,14 +1,20 @@
+/// Bundle identifier of this app (tauri.conf.json). Features of the private
+/// fork (calls, the companion, the meeting prompt) only run under it.
+pub const APP_ID: &str = "com.edkiboma.voce";
+
 mod actions;
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 mod apple_intelligence;
 mod audio_feedback;
 pub mod audio_toolkit;
 mod autostart;
+mod calls;
 mod catalog;
 mod chinese_script;
 pub mod cli;
 mod clipboard;
 mod commands;
+mod early_cleanup;
 mod helpers;
 mod input;
 mod llm_client;
@@ -214,9 +220,32 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     managers::transcription::apply_accelerator_settings(app_handle);
 
     // Add managers to Tauri's managed state
+    app_handle.manage(calls::CallNotesManager::new(app_handle));
+    match calls::assistie::AssistieBridge::new(app_handle) {
+        Ok(bridge) => {
+            app_handle.manage(bridge);
+            app_handle.manage(calls::plugin::PluginRuntime::new());
+            app_handle.manage(calls::responder::TerraRuntime::new());
+            let handle = app_handle.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(error) = calls::assistie::recover(&handle).await {
+                    log::warn!("Meeting connection recovery unavailable: {error}");
+                }
+                calls::plugin::resume_saved(&handle);
+            });
+        }
+        Err(error) => log::warn!("Meeting connection unavailable: {error}"),
+    }
+    match calls::analysis::CallAiManager::new(app_handle) {
+        Ok(manager) => {
+            app_handle.manage(manager);
+        }
+        Err(error) => log::warn!("Local call AI unavailable: {error}"),
+    }
     app_handle.manage(recording_manager.clone());
     app_handle.manage(model_manager.clone());
     app_handle.manage(transcription_manager.clone());
+    app_handle.manage(Arc::new(early_cleanup::EarlyCleanup::default()));
     app_handle.manage(history_manager.clone());
     app_handle.manage(tray::TrayState::new());
 
@@ -367,8 +396,14 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     // tauri-plugin-autostart elsewhere)
     autostart::apply_autostart(app_handle, settings.autostart_enabled);
 
+    // Load the local cleanup model in the background so the first dictation
+    // after login does not wait for it.
+    actions::warm_post_process_model(&settings);
+
     // Create the recording overlay window (hidden by default)
     utils::create_recording_overlay(app_handle);
+    calls::notch::create(app_handle);
+    calls::invitation::create(app_handle);
 }
 
 #[tauri::command]
@@ -649,6 +684,50 @@ pub fn run(cli_args: CliArgs) {
 
     let specta_builder = Builder::<tauri::Wry>::new()
         .commands(collect_commands![
+            calls::start_call_notes,
+            calls::stop_call_notes,
+            calls::call_notes_snapshot,
+            calls::call_detection_snapshot,
+            calls::invitation::call_invitation_snapshot,
+            calls::invitation::preview_call_invitation,
+            calls::invitation::layout_call_invitation,
+            calls::invitation::respond_call_invitation,
+            calls::invitation::take_call_invitation_destination,
+            calls::save_call_notes,
+            calls::analysis::list_saved_calls,
+            calls::analysis::call_analysis,
+            calls::analysis::call_observatory,
+            calls::analysis::delete_call,
+            calls::assistie::memory_command,
+            calls::analysis::process_call,
+            calls::analysis::process_saved_call_local_feed,
+            calls::analysis::cancel_call_processing,
+            calls::analysis::save_saved_call_notes,
+            calls::analysis::save_call_summary,
+            calls::assistie::assistie_fixture_snapshot,
+            calls::assistie::create_assistie_fixture,
+            calls::assistie::create_call_assistie,
+            calls::assistie::saved_call_assistie,
+            calls::assistie::copy_assistie_connection,
+            calls::assistie::connect_assistie_meeting,
+            calls::assistie::connect_terra_meeting,
+            calls::assistie::rate_terra_reply,
+            calls::assistie::retry_assistie_connection,
+            calls::plugin::assistie_plugin_status,
+            calls::plugin::configure_assistie_plugin,
+            calls::plugin::start_assistie_plugin,
+            calls::plugin::disconnect_assistie_plugin,
+            calls::assistie::append_assistie_transcript,
+            calls::assistie::stop_assistie_fixture,
+            calls::assistie::ask_assistie_fixture,
+            calls::assistie::control_assistie_fixture,
+            calls::assistie::assistie_notch_feed,
+            calls::notch::record_notch_events,
+            calls::notch::notch_seen_replies,
+            calls::notch::set_assistie_notch_visible,
+            calls::notch::assistie_notch_visible,
+            calls::notch::layout_assistie_notch,
+            calls::notch::edit_assistie_notch,
             shortcut::change_binding,
             shortcut::reset_binding,
             shortcut::change_shortcut_activation_setting,
@@ -696,6 +775,7 @@ pub fn run(cli_args: CliArgs) {
             shortcut::change_vad_enabled_setting,
             shortcut::change_vad_backend_setting,
             shortcut::change_filler_word_removal_enabled_setting,
+            shortcut::change_call_invitations_enabled_setting,
             shortcut::change_chinese_script_setting,
             shortcut::change_app_language_setting,
             shortcut::change_update_checks_setting,
@@ -774,12 +854,14 @@ pub fn run(cli_args: CliArgs) {
         ]);
 
     #[cfg(debug_assertions)] // <- Only export on non-release builds
-    specta_builder
-        .export(
+    if std::env::var_os("HANDY_EXPORT_BINDINGS").is_some() {
+        if let Err(error) = specta_builder.export(
             Typescript::default().bigint(BigIntExportBehavior::Number),
-            "../src/bindings.ts",
-        )
-        .expect("Failed to export typescript bindings");
+            concat!(env!("CARGO_MANIFEST_DIR"), "/../src/bindings.ts"),
+        ) {
+            log::warn!("Could not export development bindings: {error}");
+        }
+    }
 
     let invoke_handler = specta_builder.invoke_handler();
 
@@ -816,11 +898,11 @@ pub fn run(cli_args: CliArgs) {
                     Target::new(if let Some(data_dir) = portable::data_dir() {
                         TargetKind::Folder {
                             path: data_dir.join("logs"),
-                            file_name: Some("handy".into()),
+                            file_name: Some("voce".into()),
                         }
                     } else {
                         TargetKind::LogDir {
-                            file_name: Some("handy".into()),
+                            file_name: Some("voce".into()),
                         }
                     })
                     .filter(|metadata| {
@@ -876,7 +958,6 @@ pub fn run(cli_args: CliArgs) {
     let mut app = builder
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_process::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_macos_permissions::init())
@@ -945,9 +1026,9 @@ pub fn run(cli_args: CliArgs) {
             // for portable mode (redirects WebView2 cache to portable Data dir)
             let mut win_builder =
                 tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App("/".into()))
-                    .title("Handy")
-                    .inner_size(680.0, 570.0)
-                    .min_inner_size(680.0, 570.0)
+                    .title("Voce")
+                    .inner_size(1180.0, 780.0)
+                    .min_inner_size(900.0, 640.0)
                     .resizable(true)
                     .maximizable(true)
                     .visible(false);
@@ -1115,10 +1196,32 @@ pub fn run(cli_args: CliArgs) {
         }
         // Teardown transcribe.cpp before exit
         tauri::RunEvent::Exit => {
+            if let Some(plugin) = app.try_state::<calls::plugin::PluginRuntime>() {
+                plugin.shutdown();
+            }
+            if let Some(terra) = app.try_state::<calls::responder::TerraRuntime>() {
+                terra.shutdown();
+            }
+            if let Some(ai) = app.try_state::<calls::analysis::CallAiManager>() {
+                ai.shutdown();
+            }
+            if let Some(calls) = app.try_state::<calls::CallNotesManager>() {
+                calls.stop();
+            }
             if let Some(tm) = app.try_state::<Arc<TranscriptionManager>>() {
                 let _ = tm.unload_model();
             }
         }
         _ => {}
     });
+}
+
+#[cfg(test)]
+mod app_id_tests {
+    #[test]
+    fn app_id_matches_tauri_conf() {
+        let conf: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        assert_eq!(conf["identifier"], super::APP_ID);
+    }
 }

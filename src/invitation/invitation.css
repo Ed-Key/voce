@@ -1,0 +1,236 @@
+@font-face {
+  font-family: Figtree;
+  src: url("../notch/Figtree.ttf");
+}
+:root {
+  font-family:
+    Figtree,
+    -apple-system,
+    sans-serif;
+  color: #fcfcfb;
+  color-scheme: dark;
+  background: transparent;
+  font-synthesis: none;
+}
+* {
+  box-sizing: border-box;
+}
+html,
+body,
+#root {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
+}
+button {
+  font: inherit;
+  cursor: pointer;
+  border: 0;
+}
+button:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+button:focus-visible {
+  outline: 2px solid #ee91bf;
+  outline-offset: 3px;
+}
+::selection {
+  background: #ca7da1;
+  color: #1a1a1a;
+}
+.invitation {
+  position: absolute;
+  bottom: 12px;
+  left: 12px;
+  right: 12px;
+  --surface: #1f1f1f;
+}
+.invitation-pill {
+  height: 48px;
+  background: var(--surface);
+  border: 1px solid #44433f;
+  border-radius: 16px;
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  gap: 8px;
+  box-shadow: 0 6px 12px #0004;
+}
+.invitation[data-expanded="true"] .invitation-pill {
+  height: 80px;
+}
+.invitation-trigger {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  flex: 1;
+  height: 100%;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  border-radius: 8px;
+}
+.invitation-app,
+.invitation-app img {
+  width: 24px;
+  height: 24px;
+  flex: none;
+}
+.invitation-app {
+  color: #ee91bf;
+  display: grid;
+  place-items: center;
+}
+.invitation-copy {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  min-width: 0;
+  gap: 8px;
+}
+.invitation-copy strong {
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 20px;
+  white-space: nowrap;
+}
+.invitation-now {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #bdbbb5;
+  font-size: 12px;
+  line-height: 18px;
+  white-space: nowrap;
+}
+.invitation-now i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #18ba8b;
+  flex: none;
+}
+.invitation[data-expanded="true"] .invitation-copy {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+.invitation-actions {
+  display: flex;
+  flex: none;
+  background: #ffffeb;
+  color: #1a1a1a;
+  border-radius: 8px;
+  overflow: hidden;
+  animation: invitation-reveal 160ms ease-out;
+}
+@keyframes invitation-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.invitation-start {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  font-size: 12px;
+  line-height: 18px;
+  font-weight: 600;
+  background: transparent;
+  color: inherit;
+  white-space: nowrap;
+}
+.invitation-start:hover,
+.invitation-options:hover {
+  background: #f0f0d6;
+}
+.invitation-hand {
+  width: 24px;
+  height: 24px;
+  border-radius: 5px;
+  background: #1a1a1a;
+  color: #ffffeb;
+  display: grid;
+  place-items: center;
+}
+.invitation-hand svg {
+  fill: currentColor;
+  stroke: currentColor;
+}
+.invitation-options {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  border-left: 1px solid #c8c8c2;
+}
+.invitation-start:focus-visible,
+.invitation-options:focus-visible {
+  outline: 2px solid #1a1a1a;
+  outline-offset: -3px;
+}
+.invitation-dismiss {
+  position: absolute;
+  top: -9px;
+  left: -7px;
+  border-radius: 50%;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  background: #202020;
+  color: #bdbbb5;
+  border: 1px solid #4b4944;
+}
+.invitation-dismiss:hover {
+  color: #fff;
+  background: #343330;
+}
+.invitation-menu {
+  background: #242422;
+  color: #fcfcfb;
+  border-radius: 10px;
+  padding: 5px;
+  margin: 0 0 8px auto;
+  width: 230px;
+  box-shadow: 0 6px 12px #0004;
+}
+.invitation-menu button {
+  display: block;
+  width: 100%;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 12px;
+}
+.invitation-menu button:hover {
+  background: #ffffff14;
+}
+.invitation-menu p {
+  font-size: 12px;
+  line-height: 1.4;
+  margin: 7px 10px 8px;
+  color: #f2bfd5;
+}
+@media (prefers-reduced-motion: reduce) {
+  .invitation-actions {
+    animation: none;
+  }
+}

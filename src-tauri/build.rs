@@ -2,11 +2,14 @@ fn main() {
     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     build_apple_intelligence_bridge();
 
+    #[cfg(target_os = "macos")]
+    build_call_audio_bridge();
+
     generate_tray_translations();
 
     // Linux ships transcribe-cpp as a shared libtranscribe + loadable ggml
     // backend modules (the `dynamic-backends` posture in Cargo.toml). Bake an
-    // $ORIGIN-relative rpath into the `handy` binary so it finds libtranscribe
+    // $ORIGIN-relative rpath into the `voce` binary so it finds libtranscribe
     // next to it in the package — deb/rpm install into the app-private
     // `/usr/lib/Handy` (the dir tauri already uses for resources; keeps
     // Handy's libs out of the ldconfig-scanned `/usr/lib`, issue #1639) while
@@ -27,7 +30,7 @@ fn main() {
 
     // When ORT is dynamically linked (Windows CI sets ORT_LIB_LOCATION +
     // ORT_PREFER_DYNAMIC_LINK to a baseline ONNX Runtime), ship its onnxruntime.dll
-    // next to Handy.exe so the app loads our baseline build instead of statically
+    // next to voce.exe so the app loads our baseline build instead of statically
     // embedding pyke's /arch:AVX2 one (which crashes at startup on pre-Haswell CPUs).
     stage_onnxruntime_dll();
 
@@ -40,7 +43,7 @@ fn main() {
 /// Stage the MSVC runtime DLLs into `transcribe-libs/` for app-local deployment.
 ///
 /// Handy's native stack links the VC++ runtime dynamically (/MD). Shipping the
-/// DLLs beside `handy.exe` covers machines with no redistributable installed and
+/// DLLs beside `voce.exe` covers machines with no redistributable installed and
 /// machines whose system redist is older than the CI toolset (issue #1527).
 ///
 /// Driven by `HANDY_VC_REDIST_DIRS`, set by CI to the redist dirs from the same
@@ -104,7 +107,7 @@ fn stage_vc_runtime_dlls() {
 
 /// Copy the dynamically-linked ONNX Runtime `onnxruntime.dll` into the
 /// `transcribe-libs/` staging dir so `tauri.windows.conf.json` bundles it beside
-/// `Handy.exe` (Windows resolves DLLs from the executable's directory).
+/// `voce.exe` (Windows resolves DLLs from the executable's directory).
 ///
 /// No-op unless `ORT_PREFER_DYNAMIC_LINK` + `ORT_LIB_LOCATION` are set for a Windows
 /// target — i.e. the CI dynamic-link path. A plain static build (no env) skips this
@@ -159,7 +162,7 @@ fn stage_onnxruntime_dll() {
 /// this is a no-op there. `RUNTIME_DIR` (core libs) and `MODULE_DIR` (dlopen'd
 /// ggml modules) may be the same dir — the `BTreeSet` below dedups them.
 ///
-/// Where the staged dir lands: Windows bundles it beside `handy.exe` (DLLs resolve
+/// Where the staged dir lands: Windows bundles it beside `voce.exe` (DLLs resolve
 /// from the exe dir); Linux deb/rpm map it into the app-private `/usr/lib/Handy`
 /// and the AppImage into `usr/lib`, both on the binary's rpath.
 fn stage_transcribe_runtime_libs() {
@@ -577,4 +580,48 @@ fn is_command_line_tools_only() -> bool {
         .and_then(|out| String::from_utf8(out.stdout).ok())
         .map(|path| path.trim().ends_with("CommandLineTools"))
         .unwrap_or(false)
+}
+
+#[cfg(target_os = "macos")]
+fn build_call_audio_bridge() {
+    use std::{env, path::PathBuf, process::Command};
+    println!("cargo:rerun-if-changed=src/calls/system_audio.swift");
+    let out = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR"));
+    let object = out.join("call_audio.o");
+    let target = if env::var("CARGO_CFG_TARGET_ARCH").as_deref() == Ok("aarch64") {
+        "arm64-apple-macosx14.4"
+    } else {
+        "x86_64-apple-macosx14.4"
+    };
+    assert!(Command::new("xcrun")
+        .args([
+            "swiftc",
+            "-parse-as-library",
+            "-swift-version",
+            "5",
+            "-target",
+            target,
+            "-O",
+            "-c",
+            "src/calls/system_audio.swift",
+            "-o"
+        ])
+        .arg(&object)
+        .status()
+        .expect("swiftc")
+        .success());
+    assert!(Command::new("libtool")
+        .args(["-static", "-o"])
+        .arg(out.join("libcall_audio.a"))
+        .arg(object)
+        .status()
+        .expect("libtool")
+        .success());
+    println!("cargo:rustc-link-search=native={}", out.display());
+    println!("cargo:rustc-link-lib=static=call_audio");
+    println!("cargo:rustc-link-lib=framework=CoreAudio");
+    println!("cargo:rustc-link-lib=framework=AudioToolbox");
+    println!("cargo:rustc-link-lib=framework=AVFoundation");
+    println!("cargo:rustc-link-lib=framework=AppKit");
+    println!("cargo:rustc-link-lib=framework=ApplicationServices");
 }
