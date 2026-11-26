@@ -638,11 +638,12 @@ fn default_auto_submit() -> bool {
 }
 
 fn default_history_limit() -> usize {
-    5
+    5000
 }
 
 fn default_recording_retention_period() -> RecordingRetentionPeriod {
-    RecordingRetentionPeriod::PreserveLimit
+    // Matches the README: dictation audio is kept for 3 days, the text stays.
+    RecordingRetentionPeriod::Days3
 }
 
 fn default_audio_feedback_volume() -> f32 {

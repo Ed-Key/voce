@@ -16,8 +16,8 @@ export const RecordingRetentionPeriodSelector: React.FC<RecordingRetentionPeriod
     const { getSetting, updateSetting, isUpdating } = useSettings();
 
     const selectedRetentionPeriod =
-      getSetting("recording_retention_period") || "never";
-    const historyLimit = getSetting("history_limit") || 5;
+      getSetting("recording_retention_period") || "days3";
+    const historyLimit = getSetting("history_limit") || 5000;
 
     const handleRetentionPeriodSelect = async (period: string) => {
       await updateSetting(

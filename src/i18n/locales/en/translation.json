@@ -21,7 +21,7 @@
   },
   "onboarding": {
     "subtitle": "To get started, choose a transcription model",
-    "existingModelsTitle": "Compatible Models",
+    "existingModelsTitle": "Downloaded",
     "downloadModelsTitle": "Available to Download",
     "showAllModels": "Show all {{total}} models",
     "showFewerModels": "Show fewer models",
@@ -763,7 +763,6 @@
     "stopped": "Recording stopped",
     "start": "Start Notetaker",
     "stop": "Stop",
-    "permissionHelp": "Rebuilding Voce can invalidate its macOS permissions. If access is enabled but still reported missing, refresh only Voce in System Settings and reopen it.",
     "detected": "{{apps}} call activity detected.",
     "possibleEnd": "Call activity is no longer detected. Muting or reconnecting can cause this too. Stop notes when you are finished.",
     "noCallDetected": "No supported call activity detected. You can still start notes manually.",

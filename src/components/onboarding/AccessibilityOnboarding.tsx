@@ -324,11 +324,6 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
           <p className="text-text/70">
             {t("onboarding.permissions.description")}
           </p>
-          {isMacOS && (
-            <p className="text-xs text-text/60 mt-3">
-              {t("calls.permissionHelp")}
-            </p>
-          )}
         </div>
 
         {/* Microphone Permission Card */}
