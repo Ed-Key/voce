@@ -9,7 +9,7 @@
   </picture>
 </h1>
 
-<p align="center">Private, on-device dictation and meeting notes for macOS.</p>
+<p align="center">Private, on-device dictation and meeting notes for macOS.<br>An open-source alternative to Wispr Flow.</p>
 
 Hold a key, speak, let go: your words are transcribed on your Mac, cleaned up by a small local model, and pasted into whatever app you are using. Voce can also take notes on calls, transcribing both sides live and writing a summary afterwards, without sending audio anywhere.
 
@@ -35,6 +35,30 @@ Voce is a personal project built on top of [Handy](https://github.com/cjpais/Han
 - **Cleanup while you speak.** An optional local language model (for example one served by LM Studio) fixes punctuation, removes filler words and adds paragraphs. With early cleanup on, Voce cleans the text while you are still talking, so after you let go it only has to finish the last sentence. Typical release-to-paste time is well under a second.
 - **Meeting notes.** Records the microphone and the other side of a call, transcribes them live with a streaming model on the Neural Engine, removes speaker echo, and writes notes and a summary when the call ends. Detects Discord, FaceTime, Zoom and Google Meet calls and offers to start (it never starts recording on its own).
 - **Meeting companion (experimental).** A companion that reads the live transcript and offers short pointers and answers in a slip under the Mac's notch. It currently runs on OpenAI's Codex CLI; see [Experimental: meeting companion](#experimental-meeting-companion).
+
+## Compared with Wispr Flow
+
+Voce aims to feel like Wispr Flow's dictation while keeping your voice on your Mac.
+
+| | Voce | Wispr Flow |
+|---|---|---|
+| Speech recognition | On your Mac | On Wispr's servers |
+| Cleanup (punctuation, filler words, paragraphs) | While you speak, with a local model or a cloud model you choose, or off | While you speak, on Wispr's servers |
+| Audio leaves your Mac | No | Yes |
+| Source code | Open source (MIT) | Closed |
+| Cost | Free | Free tier with a weekly word limit, paid plans |
+| Platforms | macOS | macOS, Windows, iPhone, Android |
+| Setup | Local cleanup model set up by hand for now | Sign in and go |
+
+**Speed.** Time from letting go of the key to the text appearing, on 100 to 200 word dictations (about a minute of speech), same speaker, same Mac (Apple M5 Pro):
+
+| | Median release to paste | Dictations measured |
+|---|---|---|
+| Voce, early cleanup on, `s1-mini` in LM Studio | 734 ms | 15 |
+| Wispr Flow, all models | 842 ms | 58 |
+| Wispr Flow, `canto 1.0.1` model | 649 ms | |
+
+Wispr Flow's numbers come from its own timing records in the same person's history. In typical use the two feel about the same. Voce's slow cases are slower: its slowest of the 15 took 3.6 seconds, while 9 in 10 Wispr Flow dictations finished within 1.5 seconds. This is a small sample from one person, not a benchmark. To get these speeds, turn on early cleanup (see [Setup](#setup)).
 
 ## Privacy
 
