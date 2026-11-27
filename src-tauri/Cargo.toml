@@ -1,6 +1,6 @@
 [package]
 name = "voce"
-version = "0.9.8"
+version = "1.0.0"
 description = "Voce"
 authors = ["CJ Pais", "Edward Kiboma"]
 edition = "2021"

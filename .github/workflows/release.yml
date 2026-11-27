@@ -1,14 +1,20 @@
 # Builds Voce for Apple Silicon Macs.
 #
-# Run it from the Actions tab ("Release", then "Run workflow").
-# - With all Apple secrets set, it signs and notarizes the app and uploads the
-#   DMG and the updater files (latest.json and the signed .app.tar.gz) to a
-#   DRAFT release. Nobody sees a draft, and the in-app updater ignores it, until
-#   you press Publish on the release page. It runs from main only, and stops if
-#   the version already has a release (draft or published) or a tag on another
-#   commit; it never deletes or overwrites a release.
-# - Without them (a rehearsal), it builds an unsigned app and keeps it as a
-#   workflow artifact only, so an unsigned build can never be published.
+# Run it from the Actions tab ("Release", then "Run workflow"). It picks one of three modes:
+# - notarized: all five Apple secrets are set. Signed with a Developer ID and
+#   notarized, so macOS opens it without a warning.
+# - self-signed: no Apple secrets, but the Voce signing certificate is set.
+#   macOS blocks the first launch once (Privacy & Security, Open Anyway); the
+#   signature stays the same across releases, so permissions survive updates.
+# - rehearsal: neither. Builds without a signature and keeps it as a workflow
+#   artifact only, so an unsigned build can never be published.
+# Some but not all Apple secrets is an error.
+#
+# Both release modes upload the DMG and the updater files (latest.json and the
+# signed .app.tar.gz) to a DRAFT release. Nobody sees a draft, and the in-app
+# updater ignores it, until you press Publish on the release page. They run from
+# main only, and stop if the version already has a release (draft or published)
+# or a tag on another commit; they never delete or overwrite a release.
 #
 # The version comes from src-tauri/tauri.conf.json; bump it before each release.
 #
@@ -19,6 +25,8 @@
 #   APPLE_API_ISSUER            App Store Connect API key: issuer id
 #   APPLE_API_KEY               App Store Connect API key: key id
 #   APPLE_API_KEY_P8            App Store Connect API key: contents of the .p8 file
+#   VOCE_SIGNING_CERT           self-signed "Voce Release Signing" certificate, .p12 as base64
+#   VOCE_SIGNING_CERT_PASSWORD  password of that .p12
 
 name: Release
 
@@ -38,11 +46,29 @@ jobs:
     env:
       CMAKE_POLICY_VERSION_MINIMUM: "3.5"
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      # Signed only when every Apple secret is present; anything less is a rehearsal.
-      SIGNED: ${{ secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_CERTIFICATE_PASSWORD != '' && secrets.APPLE_API_ISSUER != '' && secrets.APPLE_API_KEY != '' && secrets.APPLE_API_KEY_P8 != '' }}
+      APPLE_ALL: ${{ secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_CERTIFICATE_PASSWORD != '' && secrets.APPLE_API_ISSUER != '' && secrets.APPLE_API_KEY != '' && secrets.APPLE_API_KEY_P8 != '' }}
+      APPLE_ANY: ${{ secrets.APPLE_CERTIFICATE != '' || secrets.APPLE_CERTIFICATE_PASSWORD != '' || secrets.APPLE_API_ISSUER != '' || secrets.APPLE_API_KEY != '' || secrets.APPLE_API_KEY_P8 != '' }}
+      SELF_SIGNED: ${{ secrets.VOCE_SIGNING_CERT != '' && secrets.VOCE_SIGNING_CERT_PASSWORD != '' }}
+      # SHA-1 of the self-signed certificate. macOS keys permissions to it, so a
+      # different certificate would make every user grant them again.
+      VOCE_CERT_SHA1: 075E722E512D2896F5E273528E846EBC5679AD0F
       BUNDLE: src-tauri/target/aarch64-apple-darwin/release/bundle
     steps:
       - uses: actions/checkout@v5
+
+      - name: Pick the mode
+        run: |
+          if [ "$APPLE_ALL" = "true" ]; then MODE=notarized
+          elif [ "$APPLE_ANY" = "true" ]; then
+            echo "::error::Some Apple secrets are set but not all five. Set all of them or remove them."
+            exit 1
+          elif [ "$SELF_SIGNED" = "true" ]; then MODE=self-signed
+          else MODE=rehearsal
+          fi
+          echo "MODE=$MODE" >> "$GITHUB_ENV"
+          [ "$MODE" = rehearsal ] && RELEASE=false || RELEASE=true
+          echo "RELEASE=$RELEASE" >> "$GITHUB_ENV"
+          echo "Mode: $MODE"
 
       - name: Read version
         id: version
@@ -50,10 +76,10 @@ jobs:
           VERSION=$(python3 -c "import json; print(json.load(open('src-tauri/tauri.conf.json'))['version'])")
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
-          echo "Building Voce $VERSION (signed: $SIGNED)"
+          echo "Building Voce $VERSION ($MODE)"
 
       - name: Check the release can be created
-        if: env.SIGNED == 'true'
+        if: env.RELEASE == 'true'
         run: |
           if [ "$GITHUB_REF" != "refs/heads/main" ]; then
             echo "::error::Releases are built from main only (this run is on $GITHUB_REF)."
@@ -71,7 +97,7 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Import the Developer ID certificate
-        if: env.SIGNED == 'true'
+        if: env.MODE == 'notarized'
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -92,8 +118,31 @@ jobs:
           fi
           echo "APPLE_SIGNING_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
 
+      # The certificate is self-signed, so macOS calls it untrusted; codesign
+      # still signs with it when given its SHA-1.
+      - name: Import the self-signed certificate
+        if: env.MODE == 'self-signed'
+        env:
+          VOCE_SIGNING_CERT: ${{ secrets.VOCE_SIGNING_CERT }}
+          VOCE_SIGNING_CERT_PASSWORD: ${{ secrets.VOCE_SIGNING_CERT_PASSWORD }}
+        run: |
+          KEYCHAIN_PASSWORD=$(openssl rand -base64 24)
+          echo "$VOCE_SIGNING_CERT" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security set-keychain-settings -t 3600 -u build.keychain
+          security import "$RUNNER_TEMP/certificate.p12" -k build.keychain -P "$VOCE_SIGNING_CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" build.keychain
+          rm "$RUNNER_TEMP/certificate.p12"
+          if ! security find-identity -p codesigning build.keychain | grep -q "$VOCE_CERT_SHA1"; then
+            echo "::error::VOCE_SIGNING_CERT is not the Voce Release Signing certificate ($VOCE_CERT_SHA1)."
+            exit 1
+          fi
+          echo "APPLE_SIGNING_IDENTITY=$VOCE_CERT_SHA1" >> "$GITHUB_ENV"
+
       - name: Set up notarization
-        if: env.SIGNED == 'true'
+        if: env.MODE == 'notarized'
         env:
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
@@ -106,8 +155,8 @@ jobs:
             echo "APPLE_API_KEY=$APPLE_API_KEY"
           } >> "$GITHUB_ENV"
 
-      # Signs and notarizes when the two steps above ran (Tauri reads
-      # APPLE_SIGNING_IDENTITY and APPLE_API_*); otherwise builds unsigned.
+      # Tauri signs with APPLE_SIGNING_IDENTITY and notarizes when APPLE_API_*
+      # is set; in a rehearsal neither is, so it builds unsigned.
       # Updater packages are switched on here only, so local builds need no updater key.
       - name: Build
         env:
@@ -115,16 +164,24 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: bun run tauri build --target aarch64-apple-darwin --bundles app,dmg --config '{"bundle":{"createUpdaterArtifacts":true}}'
 
-      - name: Check the signature and notarization
-        if: env.SIGNED == 'true'
+      - name: Check the signature
+        if: env.RELEASE == 'true'
         run: |
+          set -euo pipefail
           APP=$(find "$BUNDLE/macos" -maxdepth 1 -name "*.app" | head -1)
           codesign --verify --deep --strict "$APP"
-          spctl --assess --type execute -vv "$APP"
-          xcrun stapler validate "$APP"
+          if [ "$MODE" = notarized ]; then
+            spctl --assess --type execute -vv "$APP"
+            xcrun stapler validate "$APP"
+          else
+            # Permissions follow the designated requirement; it must name this
+            # certificate (a self-signed one is its own root, so codesign says "root").
+            codesign -d -r- "$APP" 2>&1 | tee "$RUNNER_TEMP/requirement.txt"
+            grep -qiE "certificate (root|leaf) = H\"$VOCE_CERT_SHA1\"" "$RUNNER_TEMP/requirement.txt"
+          fi
 
       - name: Upload to a draft release
-        if: env.SIGNED == 'true'
+        if: env.RELEASE == 'true'
         env:
           TAG: ${{ steps.version.outputs.tag }}
           VERSION: ${{ steps.version.outputs.version }}
@@ -145,12 +202,18 @@ jobs:
           # Checked again right before creating: the build takes a while.
           # The workflow never deletes or overwrites a release.
           .github/scripts/release-guard.sh "$TAG" "$GITHUB_SHA"
+          NOTES="Download the .dmg below, open it, and drag Voce to Applications. Apple Silicon Macs, macOS 14.4 or later."
+          if [ "$MODE" = self-signed ]; then
+            NOTES="$NOTES
+
+          The first time you open Voce, macOS says it cannot check the app for malicious software. Open System Settings, then Privacy & Security, scroll down and click Open Anyway. You only do this once; updates install on their own."
+          fi
           gh release create "$TAG" --draft --target "$GITHUB_SHA" --title "Voce $TAG" \
-            --notes "Download the .dmg below, open it, and drag Voce to Applications. Apple Silicon Macs, macOS 14.4 or later." \
+            --notes "$NOTES" \
             "$DMG" "$UPDATE" "$UPDATE.sig" latest.json
 
       - name: Keep the rehearsal build
-        if: env.SIGNED != 'true'
+        if: env.RELEASE != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: voce-${{ steps.version.outputs.version }}-unsigned

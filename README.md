@@ -66,6 +66,12 @@ Wispr Flow's numbers come from its own timing records in the same person's histo
 - The companion only sees a call after you allow it for that call.
 - Dictation audio is kept for 3 days and then deleted; the text stays. Call audio is deleted 3 days after its transcript is complete; transcripts, notes and summaries stay.
 
+## Install
+
+Download the latest `.dmg` from [Releases](https://github.com/Ed-Key/voce/releases/latest), open it and drag Voce to Applications. Voce runs on Apple Silicon Macs with macOS 14.4 or later.
+
+Voce is not notarized by Apple, so the first time you open it macOS says it cannot check the app for malicious software. Open System Settings, then Privacy & Security, scroll down and click Open Anyway. You only do this once. After that Voce updates itself, and the permissions you grant stay in place.
+
 ## Requirements
 
 - macOS 14.4 or later. Developed and tested on Apple Silicon.
