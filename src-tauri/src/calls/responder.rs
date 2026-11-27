@@ -1,6 +1,7 @@
 //! Local Terra responder: one warm codex session per consented meeting, on the user's ChatGPT plan.
 //! The process talks to the meeting only through bridge.py and exits when sharing ends or when
-//! its stdin closes (Handy quit or was killed), reaping its codex child itself.
+//! its stdin closes (Handy quit or was killed), reaping its codex child itself. It starts nothing until Handy
+//! writes "go" on that stdin, after its last check that Terra (experimental) is still allowed.
 use std::{
     io::Write,
     process::{Child, Command, Stdio},
@@ -70,6 +71,11 @@ pub(super) fn launch(app: &AppHandle, run_id: &str, connection_id: &str) -> Resu
         .try_state::<TerraRuntime>()
         .ok_or("Terra route unavailable")?;
     let mut slot = runtime.0.lock().map_err(|_| "Terra route is busy")?;
+    // Terra is experimental. Checked here as well as by the caller, under the lock the switch-off shutdown takes:
+    // the switch can go off while this launch waits for the lock, and once more after the spawn below.
+    if !super::assistie::terra_enabled(app) {
+        return Err(super::assistie::TERRA_OFF.into());
+    }
     // One meeting at a time: an older responder's run is no longer active, so end it now.
     if let Some(previous) = slot.take() {
         stop(previous);
@@ -90,7 +96,7 @@ pub(super) fn launch(app: &AppHandle, run_id: &str, connection_id: &str) -> Resu
         .open(&script)
         .and_then(|mut file| file.write_all(SCRIPT.as_bytes()))
         .map_err(|_| "Cannot prepare the Terra route")?;
-    let child = Command::new("/usr/bin/python3")
+    let mut child = Command::new("/usr/bin/python3")
         .process_group(0)
         .args(["-I", "-B"])
         .arg(&script)
@@ -102,6 +108,28 @@ pub(super) fn launch(app: &AppHandle, run_id: &str, connection_id: &str) -> Resu
         .stderr(Stdio::null())
         .spawn()
         .map_err(|_| "Cannot start the Terra route")?;
+    // The responder reads nothing and starts no codex until it gets "go", written only after this last check,
+    // still under the lock. Saving the switch does not take the lock, but the cleanup's shutdown does, so it
+    // runs after this and stops anything published here. A three-byte pipe write: it does not block.
+    let go = if super::assistie::terra_enabled(app) {
+        child
+            .stdin
+            .as_mut()
+            .ok_or("Missing Terra input")
+            .and_then(|input| {
+                input
+                    .write_all(b"go\n")
+                    .map_err(|_| "Cannot start the Terra route")
+            })
+            .map_err(String::from)
+    } else {
+        Err(super::assistie::TERRA_OFF.to_string())
+    };
+    if let Err(error) = go {
+        // It never got its go, so it has started nothing: closing its input makes it exit at once.
+        stop(child);
+        return Err(error);
+    }
     *slot = Some(child);
     Ok(())
 }

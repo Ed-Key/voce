@@ -132,6 +132,8 @@ Voce needs Microphone and System Audio Recording permission for calls, and Acces
 
 ### Experimental: meeting companion
 
+The companion is off by default. To try it, turn on Settings > Advanced > Experimental features; that also shows its Memory page and its tabs on call pages. Turning the switch off ends any running companion session and stops its connection. Calls, transcripts and notes work the same either way. See [docs/terra-experimental.md](docs/terra-experimental.md).
+
 The companion runs on the [Codex CLI](https://github.com/openai/codex) signed in to a ChatGPT plan, and finds the `codex` binary on your PATH. It is a working prototype tied to that setup; making it model-agnostic is planned.
 
 Tested with Codex CLI 0.165 and the `gpt-6.1-terra` model; other versions may need changes in `src-tauri/resources/assistie/responder.py`.

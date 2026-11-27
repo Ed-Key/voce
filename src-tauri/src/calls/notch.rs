@@ -272,6 +272,11 @@ mod native {
             let panel = app
                 .get_webview_panel(LABEL)
                 .map_err(|_| "Notch panel missing")?;
+            // Checked here, on the main thread where shows and hides run in order, so a show that was approved
+            // before the Experimental switch went off cannot land after the switch-off hide.
+            if show && !crate::calls::assistie::terra_enabled(&app) {
+                return Err(crate::calls::assistie::TERRA_OFF.into());
+            }
             if show {
                 let geometry = geometry(&app, NotchLayout::Compact)?;
                 window

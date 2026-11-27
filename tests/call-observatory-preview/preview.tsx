@@ -5,6 +5,7 @@ import "@/App.css";
 import "@/i18n";
 import { CallNotes } from "@/components/calls/CallNotes";
 import { MemoryPage } from "@/components/calls/MemoryPage";
+import { useSettingsStore } from "@/stores/settingsStore";
 import { fixture } from "./fixture";
 
 const session = (id: string, title: string, active = false) => ({
@@ -175,10 +176,20 @@ let liveReads = 0;
 let stopped = false;
 const deleted: string[] = [];
 const realCall = new URLSearchParams(location.search).get("real");
+// Terra is experimental: on here unless ?terraoff. `__setExperimental` flips the switch the way Settings does.
+let experimental = !new URLSearchParams(location.search).has("terraoff");
+Object.assign(window, {
+  __setExperimental: (on: boolean) => {
+    experimental = on;
+    return useSettingsStore.getState().refreshSettings();
+  },
+});
 
 mockIPC(
   async (command, args) => {
     const id = (args as { sessionId?: string })?.sessionId;
+    if (command === "get_app_settings")
+      return { experimental_enabled: experimental };
     if (command === "list_saved_calls") {
       const day = (ago: number, hour: number) => {
         const when = new Date();

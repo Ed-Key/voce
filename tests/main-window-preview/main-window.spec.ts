@@ -39,12 +39,30 @@ for (const [name, query] of FRAMES) {
   });
 }
 
-test("nav puts content first, then settings, then About", async ({ page }) => {
-  await open(page, "section=general");
-  const order = await page
+const nav = (page: Page) =>
+  page
     .locator("nav [data-section]")
     .evaluateAll((items) => items.map((i) => i.getAttribute("data-section")));
-  expect(order).toEqual([
+
+test("nav puts content first, then settings, then About", async ({ page }) => {
+  await open(page, "section=general");
+  // Memory is Terra's, and Terra is experimental: hidden with the switch off (the default).
+  expect(await nav(page)).toEqual([
+    "calls",
+    "history",
+    "general",
+    "models",
+    "postprocessing",
+    "advanced",
+    "about",
+  ]);
+});
+
+test("Memory shows in the nav only with Experimental features on", async ({
+  page,
+}) => {
+  await open(page, "section=general&experimental");
+  expect(await nav(page)).toEqual([
     "calls",
     "memory",
     "history",

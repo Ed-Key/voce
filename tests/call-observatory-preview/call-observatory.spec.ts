@@ -277,6 +277,56 @@ test("a call with no logs says so and keeps its notes", async ({ page }) => {
   await expect(page.getByText("The launch stays on Friday.")).toBeVisible();
 });
 
+test("with Experimental features off, call pages show no Terra", async ({
+  page,
+}) => {
+  const off = async (title: string) => {
+    await page.goto("/tests/call-observatory-preview/index.html?terraoff");
+    await page.getByRole("button", { name: new RegExp(title) }).click();
+  };
+  await page.goto("/tests/call-observatory-preview/index.html?terraoff");
+  await page.locator(".call-info summary").first().click();
+  await expect(page.locator(".assistie-plugin")).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Terra fictional test" }),
+  ).toHaveCount(0);
+  await off("Launch sync");
+  await expect(page.getByRole("tab")).toHaveText(["Notes", "Transcript"]);
+  await expect(page.getByText("The launch stays on Friday.")).toBeVisible();
+  await expect(page.locator(".call-pointers")).toHaveCount(0);
+  await page.getByRole("tab", { name: "Notes" }).press("ArrowRight");
+  await expect(page.getByRole("tab", { name: "Transcript" })).toBeFocused();
+  await page.getByRole("tab", { name: "Transcript" }).press("ArrowRight");
+  await expect(page.getByRole("tab", { name: "Notes" })).toBeFocused();
+  await off("Old call");
+  await page.locator(".call-info summary").click();
+  await expect(
+    page.getByRole("button", { name: "Saved Terra answers" }),
+  ).toHaveCount(0);
+  await off("Live call");
+  await expect(page.getByRole("tab", { name: "Notes" })).toBeVisible();
+  await expect(page.locator(".terra-pill")).toHaveCount(0);
+});
+
+test("turning Experimental features off on the Terra tab shows Notes", async ({
+  page,
+}) => {
+  await open(page);
+  await tab(page, "Terra");
+  await expect(page.locator(".bubble").first()).toBeVisible();
+  await page.evaluate(() =>
+    (
+      window as unknown as { __setExperimental: (on: boolean) => unknown }
+    ).__setExperimental(false),
+  );
+  await expect(page.getByRole("tab", { name: "Notes" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(page.getByRole("tab", { name: "Terra" })).toHaveCount(0);
+  await expect(page.locator(".call-pointers")).toHaveCount(0);
+});
+
 test("speed on a real call", async ({ page }) => {
   const real = process.env.REAL_CALL_PATH;
   test.skip(

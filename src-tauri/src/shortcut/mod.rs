@@ -1078,6 +1078,8 @@ pub fn change_experimental_enabled_setting(app: AppHandle, enabled: bool) -> Res
     let mut settings = settings::get_settings(&app);
     settings.experimental_enabled = enabled;
     settings::write_settings(&app, settings);
+    // Terra (the meeting companion) is experimental: saved first, so every gate already sees the new value.
+    crate::calls::assistie::experimental_switched(app, enabled);
     Ok(())
 }
 

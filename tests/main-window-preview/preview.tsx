@@ -1,6 +1,6 @@
 // The whole main window with mocked commands and invented data, so the
 // redesign can be checked without the app, a microphone or real settings.
-// Query: ?section=history&theme=light&scroll=bottom
+// Query: ?section=history&theme=light&scroll=bottom&experimental
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { mockIPC } from "@tauri-apps/api/mocks";
@@ -22,6 +22,11 @@ Object.assign(window, {
 });
 
 const state = fixture(theme);
+// ?experimental: Settings > Advanced > Experimental features on, which shows Terra (and its Memory page).
+if (query.has("experimental"))
+  (
+    state.replies.get_app_settings as { experimental_enabled: boolean }
+  ).experimental_enabled = true;
 
 // Automated headless Chrome cannot decode audio, so there the clips report their
 // length directly; a headed browser loads the real WAV metadata.
