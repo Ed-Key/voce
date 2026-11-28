@@ -45,6 +45,9 @@ enum Job {
     /// The text of `pid`'s focused window, nearest the focused element first.
     Walk {
         pid: i32,
+        /// Checked when the walk reaches the front of the queue: false
+        /// (names turned off since it was queued) reads nothing.
+        wanted: WalkWanted,
         reply: SyncSender<WindowTexts>,
     },
 }
@@ -83,12 +86,14 @@ fn jobs() -> Option<Sender<Job>> {
     slot.lock().ok().and_then(|guard| guard.clone())
 }
 
+pub type WalkWanted = Box<dyn Fn() -> bool + Send>;
+
 /// Walk `pid`'s focused window on the walker thread (never the main thread).
 /// None if the worker is down or too slow.
-pub fn walk(pid: i32) -> Option<WindowTexts> {
+pub fn walk(pid: i32, wanted: WalkWanted) -> Option<WindowTexts> {
     let sender = jobs()?;
     let (reply, answer) = mpsc::sync_channel(1);
-    sender.send(Job::Walk { pid, reply }).ok()?;
+    sender.send(Job::Walk { pid, wanted, reply }).ok()?;
     // The walk caps itself at 50 ms; a queued warm-up may run first.
     answer.recv_timeout(Duration::from_secs(2)).ok()
 }
@@ -136,16 +141,16 @@ fn worker(jobs: Receiver<Job>) {
             Ok(Job::Warm { pid }) => {
                 let _ = std::panic::catch_unwind(|| objc2::rc::autoreleasepool(|_| warm_app(pid)));
             }
-            Ok(Job::Walk { pid, reply }) => {
-                let started = Instant::now();
-                let mut out = std::panic::catch_unwind(|| {
-                    objc2::rc::autoreleasepool(|_| walk_window(pid, started))
-                })
-                .unwrap_or(WindowTexts {
-                    reason: "worker_panic",
-                    ..Default::default()
+            Ok(Job::Walk { pid, wanted, reply }) => {
+                let out = walk_job(pid, &*wanted, |pid, started| {
+                    std::panic::catch_unwind(|| {
+                        objc2::rc::autoreleasepool(|_| walk_window(pid, started))
+                    })
+                    .unwrap_or(WindowTexts {
+                        reason: "worker_panic",
+                        ..Default::default()
+                    })
                 });
-                out.ms = started.elapsed().as_millis();
                 // Counts and reasons only, never window text.
                 debug!(
                     "Boost list: walked {} nodes in {} ms, {} texts (reason={})",
@@ -160,6 +165,26 @@ fn worker(jobs: Receiver<Job>) {
             Err(RecvTimeoutError::Disconnected) => break,
         }
     }
+}
+
+/// A walk job as the worker runs it: a walk no longer wanted when it gets
+/// its turn (it may have queued behind a warm-up) reads no window.
+pub(crate) fn walk_job(
+    pid: i32,
+    wanted: &dyn Fn() -> bool,
+    walk: impl FnOnce(i32, Instant) -> WindowTexts,
+) -> WindowTexts {
+    let started = Instant::now();
+    let mut out = if wanted() {
+        walk(pid, started)
+    } else {
+        WindowTexts {
+            reason: "cancelled",
+            ..Default::default()
+        }
+    };
+    out.ms = started.elapsed().as_millis();
+    out
 }
 
 /* ───────────────────────────── AX helpers ───────────────────────────── */

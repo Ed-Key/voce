@@ -7,7 +7,7 @@
 use super::list::{rank, Candidate, ScreenText};
 use log::debug;
 use std::collections::{HashMap, VecDeque};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
@@ -84,12 +84,35 @@ pub fn set_wanted(on: bool) {
 /// The Names setting (`screen_names`, onboarding row 24). Off: no window is
 /// walked for names and nothing stays cached.
 static ENABLED: AtomicBool = AtomicBool::new(true);
+/// Bumped each time Names goes off: a walk started under an older value
+/// reads and stores nothing, even if Names is back on by then.
+static EPOCH: AtomicU64 = AtomicU64::new(0);
 
+/// Changed under the cache lock, so a walk's store (checked under the same
+/// lock) either lands before the cache is dropped or not at all.
 pub fn set_enabled(on: bool) {
-    ENABLED.store(on, Ordering::Relaxed);
-    if !on {
-        with_cache(|c| *c = Cache::default());
-    }
+    with_cache(|c| {
+        ENABLED.store(on, Ordering::SeqCst);
+        if !on {
+            EPOCH.fetch_add(1, Ordering::SeqCst);
+            *c = Cache::default();
+        }
+    });
+}
+
+/// Names are on and have not been off since `epoch` was taken.
+fn names_current(epoch: u64) -> bool {
+    ENABLED.load(Ordering::SeqCst) && EPOCH.load(Ordering::SeqCst) == epoch
+}
+
+/// Store a walk's names only if it is still current, checked under the
+/// cache lock.
+fn store_current(epoch: u64, pid: i32, started_gen: u64, title: String, names: Vec<Candidate>) {
+    with_cache(|c| {
+        if names_current(epoch) {
+            c.store_walk(pid, started_gen, title, names);
+        }
+    });
 }
 
 fn walks_allowed() -> bool {
@@ -155,10 +178,15 @@ fn debounce(rx: &mpsc::Receiver<i32>, mut pid: i32) -> Option<i32> {
 
 #[cfg(target_os = "macos")]
 fn refresh(pid: i32) {
+    let epoch = EPOCH.load(Ordering::SeqCst);
     let started_gen = with_cache(|c| c.generation(pid));
-    let Some(walked) = super::ax::walk(pid) else {
+    let Some(walked) = super::ax::walk(pid, Box::new(move || names_current(epoch))) else {
         return;
     };
+    // Switched off while this walk waited or ran: keep nothing.
+    if !names_current(epoch) {
+        return;
+    }
     let texts: Vec<ScreenText> = walked
         .texts
         .iter()
@@ -169,15 +197,11 @@ fn refresh(pid: i32) {
         .collect();
     let names = rank(&texts);
     debug!("Boost list: {} names cached for a window", names.len());
-    // Switched off while this walk ran: keep nothing.
-    if !ENABLED.load(Ordering::Relaxed) {
-        return;
-    }
     match walked.reason {
         // A secure field is focused: nothing from this window may be used.
-        "secure_field" => with_cache(|c| c.store_walk(pid, started_gen, walked.title, Vec::new())),
-        "secure_input" | "not_trusted" | "no_window" | "worker_panic" => {}
-        _ => with_cache(|c| c.store_walk(pid, started_gen, walked.title, names)),
+        "secure_field" => store_current(epoch, pid, started_gen, walked.title, Vec::new()),
+        "secure_input" | "not_trusted" | "no_window" | "worker_panic" | "cancelled" => {}
+        _ => store_current(epoch, pid, started_gen, walked.title, names),
     }
 }
 
@@ -433,6 +457,59 @@ mod tests {
         // A relaunch starts with an empty RAM cache and the stored setting.
         set_enabled(true);
         set_wanted(false);
+    }
+
+    /// Review finding 1 (second pass): a walk already queued on the
+    /// Accessibility worker when Names goes off (here off and on again
+    /// before its turn) reads no window.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn review9_a_walk_queued_on_the_worker_before_names_went_off_reads_nothing() {
+        let _serial = NAMES.lock().unwrap_or_else(|p| p.into_inner());
+        let epoch = EPOCH.load(Ordering::SeqCst);
+        let wanted = move || names_current(epoch);
+        // Paused in the worker queue while the user switches Names off.
+        set_enabled(false);
+        set_enabled(true);
+        let mut read = false;
+        let out = crate::boost::ax::walk_job(4343, &wanted, |_, _| {
+            read = true;
+            Default::default()
+        });
+        assert!(!read, "no window read after the switch");
+        assert_eq!(out.reason, "cancelled");
+        // A walk queued now runs.
+        let epoch = EPOCH.load(Ordering::SeqCst);
+        crate::boost::ax::walk_job(4343, &move || names_current(epoch), |_, _| {
+            read = true;
+            Default::default()
+        });
+        assert!(read);
+    }
+
+    /// Review finding 1 (second pass): a walk that read the window, then
+    /// paused right before storing while Names went off, never refills the
+    /// cache, even when Names is back on before it stores.
+    #[test]
+    fn review9_a_walk_storing_after_names_went_off_never_refills_the_cache() {
+        let _serial = NAMES.lock().unwrap_or_else(|p| p.into_inner());
+        let epoch = EPOCH.load(Ordering::SeqCst);
+        let started_gen = with_cache(|c| c.generation(4444));
+        set_enabled(false);
+        set_enabled(true);
+        store_current(epoch, 4444, started_gen, "Chat".into(), names(&["Priya"]));
+        assert!(
+            with_cache(|c| c.for_app(4444)).is_empty(),
+            "stale walk dropped"
+        );
+        let epoch = EPOCH.load(Ordering::SeqCst);
+        store_current(epoch, 4444, started_gen, "Chat".into(), names(&["Priya"]));
+        assert!(
+            !with_cache(|c| c.for_app(4444)).is_empty(),
+            "a current walk stores"
+        );
+        set_enabled(false);
+        set_enabled(true);
     }
 
     #[test]
