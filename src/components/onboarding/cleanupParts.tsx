@@ -18,6 +18,7 @@ import {
   type CleanupTestError,
   defaultCloudModel,
   type CloudProvider,
+  type AppleState,
   type LocalServer,
   type S1Status,
 } from "./api";
@@ -124,6 +125,9 @@ interface ChooserOptions {
   active?: boolean;
   /** Told when the user picks Voce cleanup (true) or turns it down. */
   onS1Choice?: (wanted: boolean) => void;
+  /** Settings: Apple Intelligence's readiness (null while checking); its
+   *  test waits for ready. */
+  appleState?: AppleState | null;
 }
 
 export function useCleanupChooser({
@@ -133,6 +137,7 @@ export function useCleanupChooser({
   savedKey,
   active = true,
   onS1Choice,
+  appleState = "ready",
 }: ChooserOptions = {}) {
   const [opt, setOpt] = useState<Opt>(initial);
   const [s1, setS1] = useState<S1Status | null>(null);
@@ -354,6 +359,7 @@ export function useCleanupChooser({
   useEffect(() => {
     if (!active || test || opt === "off") return;
     if (opt === "s1" && s1?.state !== "ready") return;
+    if (opt === "apple" && appleState !== "ready") return;
     // A cloud test waits for the model list, so it runs once, on a real model.
     if (opt === "cloud" && listedWith[provider] !== cloudKey) return;
     const c = choice();
@@ -365,6 +371,7 @@ export function useCleanupChooser({
     test,
     opt,
     s1?.state,
+    appleState,
     choice,
     run,
     listedWith,
@@ -443,6 +450,7 @@ export function useCleanupChooser({
     touched,
     touch,
     hasSavedKey: (id: string) => !!savedKey?.(id),
+    appleState,
     test,
     starting,
     stopS1,
@@ -687,6 +695,11 @@ export const CleanupOptions: React.FC<{
             <div className="desc">
               {t("onboarding.cleanup.apple.description")}
             </div>
+            {c.appleState && c.appleState !== "ready" && (
+              <div className="desc">
+                {t(`onboarding.cleanup.apple.state.${c.appleState}`)}
+              </div>
+            )}
           </>,
         )}
       {showOff &&
@@ -771,6 +784,17 @@ export const LiveTest: React.FC<{
     );
     result = (
       <div className="waitline">{t("onboarding.cleanup.test.runsItself")}</div>
+    );
+  } else if (opt === "apple" && c.appleState !== "ready") {
+    status = (
+      <span className="st">{t("onboarding.cleanup.test.waitingApple")}</span>
+    );
+    result = (
+      <div className="waitline">
+        {c.appleState &&
+          `${t(`onboarding.cleanup.apple.state.${c.appleState}`)} `}
+        {t("onboarding.cleanup.test.runsWhenReady")}
+      </div>
     );
   } else if (opt === "local" && !c.choice()) {
     status = (

@@ -211,6 +211,8 @@
         "waitingKey": "Waiting for a key",
         "pasteKey": "Paste a key and the test runs by itself.",
         "waitingServer": "Waiting for a server",
+        "waitingApple": "Waiting for Apple Intelligence",
+        "runsWhenReady": "The test runs by itself once it is ready.",
         "setServer": "Set the server's address and model under Advanced, and the test runs by itself.",
         "runAgain": "Run again",
         "startingHere": "Starting cleanup on this Mac"
@@ -267,7 +269,13 @@
       "stopped": "Stopped at {{done}} of {{total}} MB",
       "apple": {
         "name": "Apple Intelligence",
-        "description": "Runs on this Mac with Apple's model."
+        "description": "Runs on this Mac with Apple's model.",
+        "state": {
+          "unsupported": "This Mac cannot run Apple Intelligence.",
+          "not_enabled": "Turn on Apple Intelligence in System Settings.",
+          "model_not_ready": "Apple Intelligence is still downloading its model.",
+          "unavailable": "Apple Intelligence is not available right now."
+        }
       }
     },
     "try": {

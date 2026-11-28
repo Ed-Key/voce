@@ -21,7 +21,13 @@ Object.assign(window, {
   },
 });
 
-const state = fixture(theme, query.get("provider") ?? undefined);
+const state = fixture(
+  theme,
+  query.get("provider") ?? undefined,
+  query.get("apple") ?? undefined,
+);
+// Tests change a reply while the page is open (Apple Intelligence ready).
+Object.assign(window, { __replies: state.replies });
 // A cleanup test passes, and saving it makes the tested choice the saved
 // one, so a test can switch provider and reopen the page.
 const BACKEND_PROVIDER: Record<string, string> = {

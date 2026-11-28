@@ -12,12 +12,18 @@ pub struct AppleLLMResponse {
 // Link to the Swift functions
 extern "C" {
     pub fn is_apple_intelligence_available() -> c_int;
+    pub fn apple_intelligence_status() -> c_int;
     pub fn free_apple_llm_response(response: *mut AppleLLMResponse);
 }
 
 // Safe wrapper functions
 pub fn check_apple_intelligence_availability() -> bool {
     unsafe { is_apple_intelligence_available() == 1 }
+}
+
+/// The Swift bridge's `apple_intelligence_status` code.
+pub fn status_code() -> i32 {
+    unsafe { apple_intelligence_status() }
 }
 
 // Link to the Swift function for system prompt support

@@ -974,6 +974,9 @@ async openAppDataDir() : Promise<Result<null, string>> {
 async checkAppleIntelligenceAvailable() : Promise<boolean> {
     return await TAURI_INVOKE("check_apple_intelligence_available");
 },
+async appleIntelligenceState() : Promise<AppleIntelligenceState> {
+    return await TAURI_INVOKE("apple_intelligence_state");
+},
 /**
  * Try to initialize Enigo (keyboard/mouse simulation).
  * On macOS, this will return an error if accessibility permissions are not granted.
@@ -1577,6 +1580,28 @@ vad_backend?: VadBackend;
  * `overlay_position` (position `none` → style `None`).
  */
 overlay_style?: OverlayStyle }
+/**
+ * Whether this Mac can run Apple Intelligence at all, and if so whether it
+ * is ready. Settings > Cleanup offers it on every eligible Mac and shows
+ * what is missing until it is ready.
+ */
+export type AppleIntelligenceState = 
+/**
+ * Not an eligible Mac, macOS before 26, or a build without it.
+ */
+"unsupported" | "ready" | 
+/**
+ * Turned off in System Settings.
+ */
+"not_enabled" | 
+/**
+ * Its model is still downloading.
+ */
+"model_not_ready" | 
+/**
+ * Unavailable for a reason this build does not know.
+ */
+"unavailable"
 export type AudioDevice = { index: string; name: string; is_default: boolean }
 export type AudioStatus = { managed: boolean; expires_at: number | null; expired: boolean }
 export type AutoSubmitKey = "enter" | "ctrl_enter" | "cmd_enter"

@@ -135,6 +135,72 @@ pub fn check_apple_intelligence_available() -> bool {
     }
 }
 
+/// Whether this Mac can run Apple Intelligence at all, and if so whether it
+/// is ready. Settings > Cleanup offers it on every eligible Mac and shows
+/// what is missing until it is ready.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum AppleIntelligenceState {
+    /// Not an eligible Mac, macOS before 26, or a build without it.
+    Unsupported,
+    Ready,
+    /// Turned off in System Settings.
+    NotEnabled,
+    /// Its model is still downloading.
+    ModelNotReady,
+    /// Unavailable for a reason this build does not know.
+    Unavailable,
+}
+
+impl AppleIntelligenceState {
+    /// From the Swift bridge's code (swift/apple_intelligence.swift).
+    pub fn from_code(code: i32) -> Self {
+        match code {
+            1 => Self::Ready,
+            2 => Self::NotEnabled,
+            3 => Self::ModelNotReady,
+            4 => Self::Unavailable,
+            _ => Self::Unsupported,
+        }
+    }
+}
+
+#[specta::specta]
+#[tauri::command]
+pub fn apple_intelligence_state() -> AppleIntelligenceState {
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    {
+        AppleIntelligenceState::from_code(crate::apple_intelligence::status_code())
+    }
+    #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
+    {
+        AppleIntelligenceState::Unsupported
+    }
+}
+
+#[cfg(test)]
+mod apple_state_tests {
+    use super::AppleIntelligenceState::{self, *};
+
+    /// Review finding 3 (second pass): an eligible Mac that is not ready
+    /// is not reported as unsupported.
+    #[test]
+    fn c5_eligible_but_unready_macs_are_not_unsupported() {
+        let states: Vec<_> = (0..=5).map(AppleIntelligenceState::from_code).collect();
+        assert_eq!(
+            states,
+            [
+                Unsupported,
+                Ready,
+                NotEnabled,
+                ModelNotReady,
+                Unavailable,
+                Unsupported
+            ]
+        );
+    }
+}
+
 /// Try to initialize Enigo (keyboard/mouse simulation).
 /// On macOS, this will return an error if accessibility permissions are not granted.
 #[specta::specta]

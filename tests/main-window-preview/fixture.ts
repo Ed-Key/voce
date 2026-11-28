@@ -231,6 +231,8 @@ export function fixture(
   theme: string,
   /** The saved cleanup provider (default: a custom server). */
   provider = "custom",
+  /** apple_intelligence_state's answer. */
+  apple = "ready",
 ) {
   const settings = {
     onboarding_completed: true,
@@ -335,7 +337,7 @@ export function fixture(
     },
     fetch_post_process_models: ["s1-mini"],
     detect_local_cleanup_servers: [],
-    check_apple_intelligence_available: true,
+    apple_intelligence_state: apple,
     get_early_cleanup_state: {
       enabled: true,
       available: true,

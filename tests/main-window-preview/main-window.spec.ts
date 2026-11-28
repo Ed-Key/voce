@@ -204,3 +204,46 @@ test("switching to Apple Intelligence saves and survives reopening", async ({
   await page.locator('nav [data-section="cleanup"]').click();
   await expect(apple).toHaveAttribute("aria-checked", "true");
 });
+
+// Second review, finding 3 (row C5): on an eligible Mac whose model is still downloading, Apple Intelligence
+// is offered with what is missing; picking it tests nothing until it is ready, and the page notices
+// readiness while it stays open, then tests and saves.
+test("Apple Intelligence on an eligible Mac waits until it is ready", async ({
+  page,
+}) => {
+  await open(page, "section=cleanup&apple=model_not_ready");
+  const apple = page.getByRole("radio", { name: /Apple Intelligence/ });
+  await expect(apple).toContainText(
+    "Apple Intelligence is still downloading its model.",
+  );
+  await apple.click();
+  await expect(page.getByText("Waiting for Apple Intelligence")).toBeVisible();
+  const appleTests = async () =>
+    (await invoked(page, "test_cleanup")).filter(
+      (c) => (c.args.choice as { kind: string }).kind === "apple_intelligence",
+    ).length;
+  await page.waitForTimeout(500);
+  expect(await appleTests()).toBe(0);
+  expect(await invoked(page, "save_cleanup_choice")).toHaveLength(0);
+  await page.evaluate(() => {
+    (
+      window as unknown as { __replies: Record<string, unknown> }
+    ).__replies.apple_intelligence_state = "ready";
+  });
+  await expect.poll(appleTests, { timeout: 8000 }).toBe(1);
+  await expect
+    .poll(async () => (await invoked(page, "save_cleanup_choice")).length)
+    .toBe(1);
+});
+
+test("Apple Intelligence is not offered on a Mac that cannot run it", async ({
+  page,
+}) => {
+  await open(page, "section=cleanup&apple=unsupported");
+  await expect(
+    page.getByRole("radio", { name: /Custom server|LM Studio/ }).first(),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("radio", { name: /Apple Intelligence/ }),
+  ).toHaveCount(0);
+});

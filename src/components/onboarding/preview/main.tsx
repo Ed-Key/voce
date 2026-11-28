@@ -169,7 +169,7 @@ const fake: OnboardingApi = {
     tryCb = cb;
     return () => {};
   },
-  appleAvailable: async () => false,
+  appleState: async () => "unsupported",
   getNamesEnabled: async () => true,
   setNamesEnabled: noop,
   getStorage: async () => ({

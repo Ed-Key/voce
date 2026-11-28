@@ -10,6 +10,7 @@ import { ShortcutInput } from "../ShortcutInput";
 import {
   api,
   type CleanupChoice,
+  type AppleState,
   type LocalServer,
   type S1Control,
 } from "@/components/onboarding/api";
@@ -32,6 +33,7 @@ type Settings = AppSettings & {
 };
 
 const VOCE_LOCAL = "voce_local";
+const APPLE_RECHECK_MS = 3000;
 const DEFAULT_PROMPT_ID = "default_improve_transcriptions";
 const STYLES: S1Control["styling"][] = [
   "casual",
@@ -118,15 +120,32 @@ const CleanupPage: React.FC<{ settings: Settings }> = ({ settings }) => {
   const keysRef = useRef(keys);
   keysRef.current = keys;
   const savedKey = useMemo(() => (id: string) => keysRef.current[id] ?? "", []);
-  const c = useCleanupChooser({ ...opening, savedKey, active: wantOn });
-  // Offered whenever this Mac supports it, not only when it was saved.
-  const [appleAvailable, setAppleAvailable] = useState(false);
+  // Apple Intelligence is offered on every Mac that can run it; until it
+  // is ready (turned off, model downloading) the row says what is missing,
+  // its test waits, and readiness is checked again while the page is open.
+  const [appleState, setAppleState] = useState<AppleState | null>(null);
+  const appleSettled = appleState === "ready" || appleState === "unsupported";
   useEffect(() => {
-    api
-      .appleAvailable()
-      .then(setAppleAvailable)
-      .catch((e) => console.warn("Apple Intelligence availability:", e));
-  }, []);
+    if (appleSettled) return;
+    let alive = true;
+    const check = () =>
+      api
+        .appleState()
+        .then((s) => alive && setAppleState(s))
+        .catch((e) => console.warn("Apple Intelligence state:", e));
+    check();
+    const id = setInterval(check, APPLE_RECHECK_MS);
+    return () => {
+      alive = false;
+      clearInterval(id);
+    };
+  }, [appleSettled]);
+  const c = useCleanupChooser({
+    ...opening,
+    savedKey,
+    active: wantOn,
+    appleState,
+  });
 
   // Is this choice already what the settings hold?
   const isSaved = (choice: CleanupChoice) => {
@@ -320,7 +339,10 @@ const CleanupPage: React.FC<{ settings: Settings }> = ({ settings }) => {
             c={c}
             compact
             showOff={false}
-            showApple={appleAvailable || opening.initial === "apple"}
+            showApple={
+              (!!appleState && appleState !== "unsupported") ||
+              opening.initial === "apple"
+            }
             showCustom
           />
           <LiveTest c={c} canRerun arrowSize={14} off={off} />

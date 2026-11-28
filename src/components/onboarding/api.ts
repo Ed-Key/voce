@@ -16,6 +16,7 @@ import {
   commands,
   events,
   type AppSettings,
+  type AppleIntelligenceState,
   type CleanupChoice as BackendChoice,
   type RecordingRetentionPeriod,
 } from "@/bindings";
@@ -48,6 +49,7 @@ export type LocalServer = {
   baseUrl: string;
   models: string[];
 };
+export type AppleState = AppleIntelligenceState;
 export type CloudProvider = { id: string; label: string; model: string };
 
 export type CleanupChoice =
@@ -164,8 +166,8 @@ export interface OnboardingApi {
   /** Resolves within about 1 s; never blocks the screen. */
   detectLocalServers(): Promise<LocalServer[]>;
   openLocalServerApp(kind: LocalServerKind): Promise<void>;
-  /** Apple Intelligence can run on this Mac. */
-  appleAvailable(): Promise<boolean>;
+  /** Whether this Mac can run Apple Intelligence, and whether it is ready. */
+  appleState(): Promise<AppleState>;
   cloudProviders(): Promise<CloudProvider[]>;
   /** The provider's models, listed with the typed key (nothing saved). */
   listCloudModels(providerId: string, apiKey: string): Promise<string[]>;
@@ -374,7 +376,7 @@ const realApi: OnboardingApi = {
   },
   // TODO(backend): no command opens LM Studio or Ollama yet.
   openLocalServerApp: () => notWired("openLocalServerApp"),
-  appleAvailable: () => commands.checkAppleIntelligenceAvailable(),
+  appleState: () => commands.appleIntelligenceState(),
 
   async cloudProviders() {
     const s = await settings();
