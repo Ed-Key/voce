@@ -1585,19 +1585,19 @@ overlay_style?: OverlayStyle }
  * is ready. Settings > Cleanup offers it on every eligible Mac and shows
  * what is missing until it is ready.
  */
-export type AppleIntelligenceState = 
+export type AppleIntelligenceState =
 /**
  * Not an eligible Mac, macOS before 26, or a build without it.
  */
-"unsupported" | "ready" | 
+"unsupported" | "ready" |
 /**
  * Turned off in System Settings.
  */
-"not_enabled" | 
+"not_enabled" |
 /**
  * Its model is still downloading.
  */
-"model_not_ready" | 
+"model_not_ready" |
 /**
  * Unavailable for a reason this build does not know.
  */
