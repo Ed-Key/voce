@@ -112,6 +112,8 @@ struct FinalizedStreamText {
     output_language: OutputLanguageEvidence,
     /// The streaming model's supported languages, for text-based detection.
     supported_languages: Vec<String>,
+    /// The stream's boost list, whose spellings the final text restores.
+    vocabulary: Vec<String>,
 }
 
 /// Routes real-time audio frames to the active streaming worker. Shared between
@@ -278,6 +280,10 @@ pub struct TranscriptionManager {
     /// `is_model_loaded()` consults this so the model still reports "loaded"
     /// while the worker holds it.
     active_engine_lease: Arc<AtomicU64>,
+    /// The loaded primary boosts a vocabulary inside its stream: a streaming
+    /// transcribe-cpp model with `Feature::Vocabulary` that is not Whisper
+    /// (Whisper keeps its initial prompt). Boost-design v3.6 option A0.
+    primary_boosts: Arc<AtomicBool>,
 }
 
 impl TranscriptionManager {
@@ -298,6 +304,7 @@ impl TranscriptionManager {
             next_stream_worker_id: Arc::new(AtomicU64::new(1)),
             active_stream_worker: Arc::new(AtomicU64::new(0)),
             active_engine_lease: Arc::new(AtomicU64::new(0)),
+            primary_boosts: Arc::new(AtomicBool::new(false)),
         };
 
         // Start the idle watcher
@@ -424,6 +431,7 @@ impl TranscriptionManager {
             let mut current_model = self.current_model_id.lock().unwrap();
             *current_model = None;
         }
+        self.set_primary_boosts(false);
 
         // Emit unloaded event
         let _ = self.app_handle.emit(
@@ -553,6 +561,7 @@ impl TranscriptionManager {
             let mut current_model = self.current_model_id.lock().unwrap();
             *current_model = None;
         }
+        self.set_primary_boosts(false);
 
         // Create appropriate engine based on model type
 
@@ -644,6 +653,12 @@ impl TranscriptionManager {
                     caps.supports_streaming,
                     caps.supports_translate,
                     caps.supports_language_detect
+                );
+                let model = session.model();
+                self.set_primary_boosts(
+                    caps.supports_streaming
+                        && model.supports(Feature::Vocabulary)
+                        && model.arch() != "whisper",
                 );
                 LoadedEngine::TranscribeCpp(session)
             }
@@ -801,6 +816,17 @@ impl TranscriptionManager {
         }
     }
 
+    fn set_primary_boosts(&self, on: bool) {
+        self.primary_boosts.store(on, Ordering::Release);
+        // The screen-name cache only walks windows while it can be used.
+        crate::boost::screen::set_wanted(on);
+    }
+
+    /// Whether the loaded model boosts a vocabulary inside its stream.
+    pub fn primary_boosts(&self) -> bool {
+        self.primary_boosts.load(Ordering::Acquire)
+    }
+
     /// Whether a live streaming run is currently in flight.
     pub fn is_streaming(&self) -> bool {
         self.stream_active.load(Ordering::Acquire)
@@ -822,7 +848,9 @@ impl TranscriptionManager {
     /// model can't stream, the worker idles until finalize/cancel and reports
     /// `None` so the caller falls back to batch transcription. Frames sent
     /// before the stream begins queue on the channel and are not lost.
-    pub fn start_stream(&self) {
+    /// `vocabulary`: the dictation's frozen list, boosted inside the
+    /// stream's decoder and restored in its text (option A0); empty for none.
+    pub fn start_stream(&self, vocabulary: Vec<String>) {
         if self.router.is_open() || self.active_stream_worker.load(Ordering::Acquire) != 0 {
             warn!("start_stream called while a stream worker is already active");
             return;
@@ -846,7 +874,7 @@ impl TranscriptionManager {
             .map(|ec| ec.session());
 
         let manager = self.clone();
-        thread::spawn(move || manager.run_stream_worker(rx, worker_id, early_token));
+        thread::spawn(move || manager.run_stream_worker(rx, worker_id, early_token, vocabulary));
     }
 
     fn run_stream_worker(
@@ -854,6 +882,7 @@ impl TranscriptionManager {
         rx: mpsc::Receiver<StreamCmd>,
         worker_id: u64,
         early_token: Option<u64>,
+        vocabulary: Vec<String>,
     ) {
         let _worker = StreamWorkerGuard {
             worker_id,
@@ -969,6 +998,7 @@ impl TranscriptionManager {
             task: run_plan.task,
             language: run_plan.language,
             target_language: run_plan.target_language,
+            vocabulary: vocabulary.clone(),
             ..Default::default()
         };
 
@@ -1040,12 +1070,19 @@ impl TranscriptionManager {
                                     {
                                         let raw_words = text.committed.split_whitespace().count();
                                         if ec.due(*token, raw_words) {
-                                            let filtered = post_process_transcription_text(
-                                                text.committed.clone(),
-                                                &settings,
-                                                false,
-                                                &output_language,
-                                                &languages,
+                                            let filtered = crate::boost::list::restore_spelling(
+                                                &post_process_transcription_text(
+                                                    crate::early_cleanup::finished_words(
+                                                        &text.committed,
+                                                    )
+                                                    .to_string(),
+                                                    &settings,
+                                                    false,
+                                                    &output_language,
+                                                    &languages,
+                                                ),
+                                                &vocabulary,
+                                                &settings.custom_words,
                                             );
                                             ec.offer(*token, filtered, raw_words);
                                         }
@@ -1102,6 +1139,7 @@ impl TranscriptionManager {
                                     text: stream.text().full,
                                     output_language,
                                     supported_languages: languages.clone(),
+                                    vocabulary: vocabulary.clone(),
                                 })
                             }
                             Err(e) => {
@@ -1197,12 +1235,16 @@ impl TranscriptionManager {
         let settings = get_settings(&self.app_handle);
         // Streaming models do not receive a decode prompt, so custom words
         // always go through the shared fuzzy post-correction path.
-        let filtered = post_process_transcription_text(
-            finalized.text,
-            &settings,
-            false,
-            &finalized.output_language,
-            &finalized.supported_languages,
+        let filtered = crate::boost::list::restore_spelling(
+            &post_process_transcription_text(
+                finalized.text,
+                &settings,
+                false,
+                &finalized.output_language,
+                &finalized.supported_languages,
+            ),
+            &finalized.vocabulary,
+            &settings.custom_words,
         );
 
         self.maybe_unload_immediately("streaming transcription");
@@ -1247,7 +1289,8 @@ impl TranscriptionManager {
 
     /// `transcribe` with custom terms for transcribe.cpp's phrase boosting
     /// (`RunOptions::vocabulary`; offline decoders of models that report
-    /// `Feature::Vocabulary`). No terms is exactly `transcribe`.
+    /// `Feature::Vocabulary`). The batch fallback of a boosted dictation
+    /// passes its frozen list; no terms is exactly `transcribe`.
     pub fn transcribe_with_vocabulary(
         &self,
         audio: Vec<f32>,
@@ -1584,12 +1627,16 @@ impl TranscriptionManager {
         // family). We don't pass a prompt to non-whisper models (it requires the
         // whisper-kind run extension), so they still get fuzzy correction here,
         // same as the ONNX engines.
-        let filtered_result = post_process_transcription_text(
-            result,
-            &settings,
-            model_is_whisper,
-            &output_language,
-            &model_languages,
+        let filtered_result = crate::boost::list::restore_spelling(
+            &post_process_transcription_text(
+                result,
+                &settings,
+                model_is_whisper,
+                &output_language,
+                &model_languages,
+            ),
+            vocabulary,
+            &settings.custom_words,
         );
 
         let et = std::time::Instant::now();

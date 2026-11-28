@@ -547,6 +547,47 @@ pub(crate) async fn process_transcription_output(
     }
 }
 
+/// The current dictation's name boosting (docs/boost-lifecycle.md): the
+/// list frozen at key-down and why it is or is not boosted.
+struct Boost {
+    /// "on", or the `boost=off` reason: `empty` (no list), `model` (the
+    /// loaded model cannot boost), `stream` (the model does not stream).
+    reason: &'static str,
+    list: Vec<String>,
+}
+
+impl Boost {
+    fn off(reason: &'static str) -> Self {
+        Boost {
+            reason,
+            list: Vec::new(),
+        }
+    }
+}
+
+static BOOST: std::sync::Mutex<Option<Boost>> = std::sync::Mutex::new(None);
+
+/// Key-down: freeze the list and decide whether the stream boosts it. A
+/// model still loading counts as boosting; the library ignores a list on
+/// a model without vocabulary support.
+fn boost_for(tm: &TranscriptionManager, settings: &AppSettings) -> Boost {
+    boost_decision(
+        crate::boost::list::frozen_list(settings),
+        tm.is_model_loaded(),
+        tm.primary_boosts(),
+    )
+}
+
+fn boost_decision(list: Vec<String>, loaded: bool, boosts: bool) -> Boost {
+    if list.is_empty() {
+        Boost::off("empty")
+    } else if loaded && !boosts {
+        Boost::off("model")
+    } else {
+        Boost { reason: "on", list }
+    }
+}
+
 impl ShortcutAction for TranscribeAction {
     fn start(&self, app: &AppHandle, binding_id: &str, _shortcut_str: &str) {
         let start_time = Instant::now();
@@ -608,11 +649,17 @@ impl ShortcutAction for TranscribeAction {
         } else {
             VadPolicy::Offline
         };
-        if model_supports_streaming {
+        let boost = if model_supports_streaming {
             app.state::<Arc<crate::early_cleanup::EarlyCleanup>>()
                 .begin(settings.clone(), self.post_process);
-            tm.start_stream();
-        }
+            // The list is frozen here and bound to this dictation.
+            let boost = boost_for(&tm, &settings);
+            tm.start_stream(boost.list.clone());
+            boost
+        } else {
+            Boost::off("stream")
+        };
+        *BOOST.lock().unwrap_or_else(|p| p.into_inner()) = Some(boost);
         let plan_elapsed = plan_started.elapsed();
 
         // Sizing the overlay follows the same advertised capability. A model that
@@ -704,6 +751,7 @@ impl ShortcutAction for TranscribeAction {
             // Starting failed (for example due to blocked microphone permissions).
             // Revert UI state so we don't stay stuck in the recording overlay.
             tm.cancel_stream();
+            BOOST.lock().unwrap_or_else(|p| p.into_inner()).take();
             utils::end_recording_overlay(app, OverlayEndReason::Error);
             set_tray_state(app, TrayIconState::Idle);
             if let Some(err) = recording_error {
@@ -740,6 +788,7 @@ impl ShortcutAction for TranscribeAction {
         shortcut::unregister_cancel_shortcut(app);
 
         let stop_time = Instant::now();
+        let key_up = crate::transcription_coordinator::key_up_for(stop_time);
         debug!("TranscribeAction::stop called for binding: {}", binding_id);
 
         let ah = app.clone();
@@ -774,6 +823,11 @@ impl ShortcutAction for TranscribeAction {
         let early = Arc::clone(&app.state::<Arc<crate::early_cleanup::EarlyCleanup>>());
         // Release: no new early cleanup requests from here on.
         early.close();
+        let boost = BOOST
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .take()
+            .unwrap_or_else(|| Boost::off("stream"));
 
         tauri::async_runtime::spawn(async move {
             let _guard = FinishGuard(ah.clone(), Arc::clone(&tm));
@@ -834,7 +888,8 @@ impl ShortcutAction for TranscribeAction {
                             streamed = true;
                             Ok(text)
                         }
-                        Ok(_) => tm.transcribe(samples),
+                        // Batch fallback boosts the same list offline.
+                        Ok(_) => tm.transcribe_with_vocabulary(samples, &boost.list),
                         Err(err) => Err(err),
                     };
                     let asr_d = transcription_time.elapsed();
@@ -940,7 +995,18 @@ impl ShortcutAction for TranscribeAction {
                             } else {
                                 let ah_clone = ah.clone();
                                 let paste_time = Instant::now();
-                                let final_text = processed.final_text;
+                                // Cleanup may write a listed name differently.
+                                let final_text = crate::boost::list::restore_spelling(
+                                    &processed.final_text,
+                                    &boost.list,
+                                    &get_settings(&ah).custom_words,
+                                );
+                                let boost_field = if boost.reason == "on" {
+                                    "on".to_string()
+                                } else {
+                                    format!("off:{}", boost.reason)
+                                };
+                                let boost_terms = boost.list.len();
                                 let cleanup_path = processed.cleanup_path;
                                 let rm_for_paste = Arc::clone(&rm);
                                 let wait_for_paste = ah.config().identifier == crate::APP_ID;
@@ -959,10 +1025,12 @@ impl ShortcutAction for TranscribeAction {
                                         Ok(()) => {
                                             let ms = |d: std::time::Duration| d.as_millis();
                                             // One line per dictation for measuring release-to-paste.
-                                            // total starts at stop(), i.e. after the 50 ms RELEASE_GRACE.
+                                            // total starts at stop(), i.e. after the 50 ms RELEASE_GRACE;
+                                            // keyup_ms at the key-up itself.
                                             info!(
-                                                "dictation_timing total_ms={} stop_rec_ms={} asr_ms={} wav_wait_ms={} cleanup_ms={} history_ms={} paste_queue_ms={} paste_ms={} audio_s={:.1} streamed={} post_process={} cleanup_path={}",
+                                                "dictation_timing total_ms={} keyup_ms={} stop_rec_ms={} asr_ms={} wav_wait_ms={} cleanup_ms={} history_ms={} paste_queue_ms={} paste_ms={} audio_s={:.1} streamed={} post_process={} cleanup_path={} boost={} terms={}",
                                                 ms(stop_time.elapsed()),
+                                                ms(key_up.elapsed()),
                                                 ms(stop_rec_d),
                                                 ms(asr_d),
                                                 ms(wav_wait_d),
@@ -973,7 +1041,9 @@ impl ShortcutAction for TranscribeAction {
                                                 audio_s,
                                                 streamed,
                                                 post_process,
-                                                cleanup_path
+                                                cleanup_path,
+                                                boost_field,
+                                                boost_terms
                                             );
                                         }
                                         Err(e) => {
@@ -1214,5 +1284,40 @@ mod tests {
         assert!(!should_use_streaming_overlay(OverlayStyle::Live, false));
         assert!(!should_use_streaming_overlay(OverlayStyle::Minimal, true));
         assert!(!should_use_streaming_overlay(OverlayStyle::None, true));
+    }
+}
+
+#[cfg(test)]
+mod boost_tests {
+    use super::boost_decision;
+
+    fn list() -> Vec<String> {
+        vec!["QuillPad".to_string()]
+    }
+
+    #[test]
+    fn boost_row1_a_boosting_model_gets_the_frozen_list() {
+        let b = boost_decision(list(), true, true);
+        assert_eq!((b.reason, b.list), ("on", list()));
+    }
+
+    #[test]
+    fn boost_row2_no_list_means_no_boost() {
+        let b = boost_decision(Vec::new(), true, true);
+        assert_eq!((b.reason, b.list.len()), ("empty", 0));
+    }
+
+    #[test]
+    fn boost_row3_a_model_that_cannot_boost_gets_no_list() {
+        let b = boost_decision(list(), true, false);
+        assert_eq!((b.reason, b.list.len()), ("model", 0));
+    }
+
+    #[test]
+    fn boost_row4_a_model_still_loading_gets_the_list() {
+        // The stream starts once the load ends; the library ignores the list
+        // if the model turns out not to support vocabulary.
+        let b = boost_decision(list(), false, false);
+        assert_eq!(b.reason, "on");
     }
 }

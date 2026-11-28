@@ -11,6 +11,22 @@ use tauri::{AppHandle, Manager};
 const DEBOUNCE: Duration = Duration::from_millis(30);
 const RELEASE_GRACE: Duration = Duration::from_millis(50);
 
+/// When the key went up for the hold that is being stopped now. The stop
+/// itself runs RELEASE_GRACE later; release timing (the boost deadline and
+/// `dictation_timing`'s `keyup_ms`) counts from the real key-up.
+static LAST_RELEASE: std::sync::Mutex<Option<Instant>> = std::sync::Mutex::new(None);
+
+/// The key-up behind the stop happening at `stop`, if it is recent (a toggle
+/// or external trigger has none; then `stop` itself).
+pub fn key_up_for(stop: Instant) -> Instant {
+    LAST_RELEASE
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .take()
+        .filter(|t| *t <= stop && stop.duration_since(*t) < Duration::from_secs(1))
+        .unwrap_or(stop)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PttAction {
     Passthrough,
@@ -449,6 +465,7 @@ impl CoordinatorState {
             // stopping is the safe reading (it is what push-to-talk always did).
             .unwrap_or(Duration::MAX);
         if held >= threshold {
+            *LAST_RELEASE.lock().unwrap_or_else(|p| p.into_inner()) = Some(released_at);
             return Some(self.begin_processing(binding_id, hotkey_string));
         }
         if let Some(hold) = &mut self.hold {
@@ -724,6 +741,19 @@ fn stop(app: &AppHandle, binding_id: &str, hotkey_string: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn boost_row18_release_timing_counts_from_the_real_key_up() {
+        let up = Instant::now();
+        *LAST_RELEASE.lock().unwrap() = Some(up);
+        let stop = up + RELEASE_GRACE;
+        assert_eq!(key_up_for(stop), up);
+        // Taken once; a stop without a hold (toggle, CLI) counts from itself.
+        assert_eq!(key_up_for(stop), stop);
+        *LAST_RELEASE.lock().unwrap() = Some(up);
+        let late = up + Duration::from_secs(5);
+        assert_eq!(key_up_for(late), late, "a stale release is ignored");
+    }
 
     #[test]
     fn push_to_talk_release_while_recording_defers_release() {

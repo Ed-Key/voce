@@ -8,6 +8,7 @@ mod apple_intelligence;
 mod audio_feedback;
 pub mod audio_toolkit;
 mod autostart;
+mod boost;
 mod calls;
 mod catalog;
 mod chinese_script;
@@ -1110,6 +1111,10 @@ pub fn run(cli_args: CliArgs) {
             // silently blocks keyed shortcuts, warns the user, and activates
             // the Carbon fallback. See secure_input.rs and issue #1578.
             secure_input::init(&app_handle);
+
+            // The boost list builder's name cache: walks the frontmost window
+            // on activation, focus and title changes (docs/boost-lifecycle.md).
+            boost::screen::watch();
 
             // Populate the overlay-enabled cache from initial settings so the
             // audio path (overlay::emit_levels, called ~24 Hz during recording)
