@@ -352,7 +352,7 @@ impl Sidecar {
                 .map_err(|e| format!("spawn failed: {e}"))?;
             if let Some(pid_file) = self.pid_file() {
                 // Without a start time the next launch never kills it.
-                let record = match ps_field(child.id(), "lstart=") {
+                let record = match process_start_us(child.id()) {
                     Some(start) => format!("{}\n{start}", child.id()),
                     None => child.id().to_string(),
                 };
@@ -489,10 +489,12 @@ impl Sidecar {
         let Ok(record) = std::fs::read_to_string(&pid_file) else {
             return;
         };
-        let start = record.split_once('\n').map(|(_, start)| start.trim());
+        let start = record
+            .split_once('\n')
+            .and_then(|(_, start)| start.trim().parse::<u64>().ok());
         let model = format!("-m {}", self.model.to_string_lossy());
         let leftover = recorded_pid(&record).filter(|&pid| {
-            start.is_some_and(|s| !s.is_empty() && ps_field(pid, "lstart=").as_deref() == Some(s))
+            start.is_some_and(|s| process_start_us(pid) == Some(s))
                 && ps_field(pid, "command=").is_some_and(|c| c.contains(&model))
         });
         if let Some(pid) = leftover {
@@ -611,8 +613,34 @@ fn recorded_pid(record: &str) -> Option<u32> {
     record.lines().next()?.trim().parse().ok()
 }
 
-/// One `ps` field of a running process: `lstart=` (its start time, which
-/// tells it from a later process with the same pid) or `command=`.
+/// When a process started, in microseconds since the epoch, as the kernel
+/// keeps it (the field `ps lstart` formats). A number tells a process from
+/// a later one with the same pid, and unlike `ps`'s localized date string it
+/// reads the same after a time-zone or locale change.
+#[cfg(target_os = "macos")]
+fn process_start_us(pid: u32) -> Option<u64> {
+    let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
+    let size = std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int;
+    // SAFETY: `info` is a zeroed proc_bsdinfo of exactly `size` bytes.
+    let n = unsafe {
+        libc::proc_pidinfo(
+            pid as libc::c_int,
+            libc::PROC_PIDTBSDINFO,
+            0,
+            &mut info as *mut libc::proc_bsdinfo as *mut libc::c_void,
+            size,
+        )
+    };
+    (n == size).then(|| info.pbi_start_tvsec * 1_000_000 + info.pbi_start_tvusec)
+}
+
+/// No start time elsewhere, so a leftover is never killed there.
+#[cfg(not(target_os = "macos"))]
+fn process_start_us(_pid: u32) -> Option<u64> {
+    None
+}
+
+/// One `ps` field of a running process (`command=`).
 fn ps_field(pid: u32, field: &str) -> Option<String> {
     let out = Command::new("ps")
         .args(["-p", &pid.to_string(), "-o", field])
@@ -1306,12 +1334,13 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
         let alive = |child: &mut std::process::Child| child.try_wait().unwrap().is_none();
         let launch = || Sidecar::new(None, with_model(&dir), Some(dir.clone())).kill_leftover();
         // A crashed Voce's server had this pid with another start time; an
-        // older build's file has none; the right start time but another
-        // model is not Voce's server either.
-        let start = ps_field(other.id(), "lstart=").unwrap();
+        // older build's file has none, or a `ps lstart` date string; the
+        // right start time but another model is not Voce's server either.
+        let start = process_start_us(other.id()).unwrap();
         for stale in [
-            format!("{}\nThu Jan  1 00:00:00 2026", other.id()),
+            format!("{}\n{}", other.id(), start - 1),
             other.id().to_string(),
+            format!("{}\nThu Jan  1 00:00:00 2026", other.id()),
             format!("{}\n{start}", other.id()),
         ] {
             std::fs::write(&pid_file, stale).unwrap();
@@ -1334,6 +1363,34 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
         std::thread::sleep(Duration::from_millis(300));
         assert!(!alive(&mut ours), "Voce's leftover server is killed");
         assert!(!pid_file.exists());
+    }
+
+    /// Review finding 4 (second pass): the Mac changed time zone and
+    /// language between the crash and the relaunch; Voce's own leftover is
+    /// still recognized and killed.
+    #[tokio::test]
+    async fn review9_a_leftover_is_recognized_after_a_time_zone_and_locale_change() {
+        let dir = temp_dir("tzchange");
+        let sidecar = Sidecar::new(
+            Some(fake_server(&dir, "healthy")),
+            with_model(&dir),
+            Some(dir.clone()),
+        );
+        drop(sidecar.ensure(None, false).await.unwrap());
+        let mut ours = sidecar.lock().child.take().unwrap();
+        // What the relaunch's `ps` and clock calls see.
+        let before = (std::env::var_os("TZ"), std::env::var_os("LC_ALL"));
+        std::env::set_var("TZ", "Pacific/Kiritimati");
+        std::env::set_var("LC_ALL", "de_DE.UTF-8");
+        Sidecar::new(None, with_model(&dir), Some(dir.clone())).kill_leftover();
+        for (key, value) in [("TZ", before.0), ("LC_ALL", before.1)] {
+            match value {
+                Some(v) => std::env::set_var(key, v),
+                None => std::env::remove_var(key),
+            }
+        }
+        std::thread::sleep(Duration::from_millis(300));
+        assert!(ours.try_wait().unwrap().is_some(), "the leftover is killed");
     }
 
     /// Finding 5: a download whose folder cannot be made leaves the slot
