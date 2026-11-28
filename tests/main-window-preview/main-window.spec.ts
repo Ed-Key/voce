@@ -247,3 +247,73 @@ test("Apple Intelligence is not offered on a Mac that cannot run it", async ({
     page.getByRole("radio", { name: /Apple Intelligence/ }),
   ).toHaveCount(0);
 });
+
+// Third review, finding 2 (row C5): the native close only hides the window, so the readiness check and the
+// chooser pause while hidden and pick up again when it shows; leaving the page stops them too.
+test("Cleanup pauses its readiness checks while the window is hidden", async ({
+  page,
+}) => {
+  await open(page, "section=cleanup&apple=model_not_ready");
+  const checks = async () =>
+    (await invoked(page, "apple_intelligence_state")).length;
+  const appleTests = async () =>
+    (await invoked(page, "test_cleanup")).filter(
+      (c) => (c.args.choice as { kind: string }).kind === "apple_intelligence",
+    ).length;
+  await page.getByRole("radio", { name: /Apple Intelligence/ }).click();
+  await expect.poll(checks, { timeout: 8000 }).toBeGreaterThan(1);
+  // Closed with the native button; Apple Intelligence gets ready meanwhile.
+  await page.evaluate(async () => {
+    const w = window as unknown as {
+      __emit: (event: string) => Promise<void>;
+      __replies: Record<string, unknown>;
+    };
+    await w.__emit("main-window-hidden");
+    w.__replies.apple_intelligence_state = "ready";
+  });
+  const hidden = await checks();
+  await page.waitForTimeout(4000);
+  expect(await checks()).toBe(hidden);
+  expect(await appleTests()).toBe(0);
+  expect(await invoked(page, "save_cleanup_choice")).toHaveLength(0);
+  // Shown again: it checks at once, then tests and saves.
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect.poll(appleTests, { timeout: 2000 }).toBe(1);
+  await expect
+    .poll(async () => (await invoked(page, "save_cleanup_choice")).length)
+    .toBe(1);
+});
+
+test("leaving Cleanup stops its readiness checks", async ({ page }) => {
+  await open(page, "section=cleanup&apple=model_not_ready");
+  const checks = async () =>
+    (await invoked(page, "apple_intelligence_state")).length;
+  await page.locator('nav [data-section="general"]').click();
+  const left = await checks();
+  await page.waitForTimeout(4000);
+  expect(await checks()).toBe(left);
+});
+
+// Third review, finding 3 (row C5): a saved Apple Intelligence on a Mac that cannot run it is not offered,
+// stays saved (nothing replaces it), and the page says so.
+test("a saved Apple Intelligence on an unsupported Mac is kept and explained", async ({
+  page,
+}) => {
+  await open(
+    page,
+    "section=cleanup&provider=apple_intelligence&apple=unsupported",
+  );
+  await expect(
+    page.getByText(
+      "Your saved choice, Apple Intelligence, isn't available on this Mac.",
+      { exact: false },
+    ),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("radio", { name: /Apple Intelligence/ }),
+  ).toHaveCount(0);
+  await page.waitForTimeout(500);
+  expect(await invoked(page, "test_cleanup")).toHaveLength(0);
+  expect(await invoked(page, "save_cleanup_choice")).toHaveLength(0);
+  expect(await invoked(page, "turn_cleanup_off")).toHaveLength(0);
+});

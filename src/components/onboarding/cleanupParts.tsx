@@ -785,6 +785,14 @@ export const LiveTest: React.FC<{
     result = (
       <div className="waitline">{t("onboarding.cleanup.test.runsItself")}</div>
     );
+  } else if (opt === "apple" && c.appleState === "unsupported") {
+    // The saved choice stays saved; nothing replaces it behind the user.
+    status = <span className="st">{t("onboarding.cleanup.test.off")}</span>;
+    result = (
+      <div className="waitline">
+        {t("onboarding.cleanup.apple.savedUnsupported")}
+      </div>
+    );
   } else if (opt === "apple" && c.appleState !== "ready") {
     status = (
       <span className="st">{t("onboarding.cleanup.test.waitingApple")}</span>

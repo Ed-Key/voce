@@ -4,6 +4,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { mockIPC } from "@tauri-apps/api/mocks";
+import { emit } from "@tauri-apps/api/event";
 import { fixture } from "./fixture";
 
 const query = new URLSearchParams(location.search);
@@ -27,7 +28,8 @@ const state = fixture(
   query.get("apple") ?? undefined,
 );
 // Tests change a reply while the page is open (Apple Intelligence ready).
-Object.assign(window, { __replies: state.replies });
+// ...and send backend events (the native close: main-window-hidden).
+Object.assign(window, { __replies: state.replies, __emit: emit });
 // A cleanup test passes, and saving it makes the tested choice the saved
 // one, so a test can switch provider and reopen the page.
 const BACKEND_PROVIDER: Record<string, string> = {

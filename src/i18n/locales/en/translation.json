@@ -275,7 +275,8 @@
           "not_enabled": "Turn on Apple Intelligence in System Settings.",
           "model_not_ready": "Apple Intelligence is still downloading its model.",
           "unavailable": "Apple Intelligence is not available right now."
-        }
+        },
+        "savedUnsupported": "Your saved choice, Apple Intelligence, isn't available on this Mac. Pick another option to clean your dictation."
       }
     },
     "try": {

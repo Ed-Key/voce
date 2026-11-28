@@ -1193,6 +1193,8 @@ pub fn run(cli_args: CliArgs) {
                 api.prevent_close();
                 let _res = window.hide();
                 if window.label() == "main" {
+                    // Pages stay mounted while hidden; they pause their timers.
+                    let _ = window.emit("main-window-hidden", ());
                     onboarding::main_window_closed(window.app_handle());
                 }
 

@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { ChevronDown, Eye, Lock } from "lucide-react";
 import { commands, type AppSettings } from "@/bindings";
 import { useSettings } from "@/hooks/useSettings";
+import { useWindowVisible } from "@/hooks/useWindowVisible";
 import { Switch } from "../../ui/ToggleSwitch";
 import { PageHeader } from "../../ui/PageHeader";
 import { ShortcutInput } from "../ShortcutInput";
@@ -123,10 +124,13 @@ const CleanupPage: React.FC<{ settings: Settings }> = ({ settings }) => {
   // Apple Intelligence is offered on every Mac that can run it; until it
   // is ready (turned off, model downloading) the row says what is missing,
   // its test waits, and readiness is checked again while the page is open.
+  // Nothing runs while the window is hidden (closing it only hides it):
+  // no readiness checks, no new tests, no saves; showing it checks again.
+  const visible = useWindowVisible();
   const [appleState, setAppleState] = useState<AppleState | null>(null);
   const appleSettled = appleState === "ready" || appleState === "unsupported";
   useEffect(() => {
-    if (appleSettled) return;
+    if (appleSettled || !visible) return;
     let alive = true;
     const check = () =>
       api
@@ -139,11 +143,11 @@ const CleanupPage: React.FC<{ settings: Settings }> = ({ settings }) => {
       alive = false;
       clearInterval(id);
     };
-  }, [appleSettled]);
+  }, [appleSettled, visible]);
   const c = useCleanupChooser({
     ...opening,
     savedKey,
-    active: wantOn,
+    active: wantOn && visible,
     appleState,
   });
 
@@ -179,7 +183,8 @@ const CleanupPage: React.FC<{ settings: Settings }> = ({ settings }) => {
   useEffect(() => {
     const test = c.test;
     // Only after the user changed something: opening the page saves nothing.
-    if (!wantOn || test?.status !== "passed" || c.touched === 0) return;
+    if (!wantOn || !visible || test?.status !== "passed" || c.touched === 0)
+      return;
     const choice = c.choice();
     if (!choice || isSaved(choice) || savingId.current === test.id) return;
     savingId.current = test.id;
@@ -191,7 +196,7 @@ const CleanupPage: React.FC<{ settings: Settings }> = ({ settings }) => {
         toast.error(t("onboarding.cleanup.saveFailed"));
       });
     // isSaved reads the settings this render holds
-  }, [c.test, wantOn, c.touched]);
+  }, [c.test, wantOn, c.touched, visible]);
 
   const toggle = async (on: boolean) => {
     setWantOn(on);
@@ -339,10 +344,7 @@ const CleanupPage: React.FC<{ settings: Settings }> = ({ settings }) => {
             c={c}
             compact
             showOff={false}
-            showApple={
-              (!!appleState && appleState !== "unsupported") ||
-              opening.initial === "apple"
-            }
+            showApple={!!appleState && appleState !== "unsupported"}
             showCustom
           />
           <LiveTest c={c} canRerun arrowSize={14} off={off} />
