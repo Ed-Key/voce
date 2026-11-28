@@ -9,7 +9,7 @@ use crate::managers::transcription::StreamWorkKind;
 use crate::managers::transcription::TranscriptionManager;
 use crate::settings::{
     get_settings, AppSettings, OverlayStyle, PostProcessProvider, APPLE_INTELLIGENCE_PROVIDER_ID,
-    VOCE_LOCAL_PROVIDER_ID,
+    RAW_BINDING_ID, VOCE_LOCAL_PROVIDER_ID,
 };
 use crate::shortcut;
 use crate::tray::{set_tray_state, TrayIconState};
@@ -64,6 +64,12 @@ struct TranscribeAction {
 }
 
 impl TranscribeAction {
+    fn for_binding(binding_id: &str) -> Self {
+        Self {
+            raw: binding_id == RAW_BINDING_ID,
+        }
+    }
+
     /// Whether this dictation cleans: the main key does whenever cleanup is
     /// on; the second shortcut never does (docs/onboarding-lifecycle.md C1).
     fn cleans(&self, settings: &AppSettings) -> bool {
@@ -1349,11 +1355,11 @@ pub static ACTION_MAP: Lazy<HashMap<String, Arc<dyn ShortcutAction>>> = Lazy::ne
     let mut map = HashMap::new();
     map.insert(
         "transcribe".to_string(),
-        Arc::new(TranscribeAction { raw: false }) as Arc<dyn ShortcutAction>,
+        Arc::new(TranscribeAction::for_binding("transcribe")) as Arc<dyn ShortcutAction>,
     );
     map.insert(
-        "transcribe_with_post_process".to_string(),
-        Arc::new(TranscribeAction { raw: true }) as Arc<dyn ShortcutAction>,
+        RAW_BINDING_ID.to_string(),
+        Arc::new(TranscribeAction::for_binding(RAW_BINDING_ID)) as Arc<dyn ShortcutAction>,
     );
     map.insert(
         "cancel".to_string(),
@@ -1416,6 +1422,34 @@ mod main_key_tests {
         settings.post_process_enabled = true;
         assert!(main.cleans(&settings), "row 16: Option+Space cleans");
         assert!(!raw.cleans(&settings), "the second key pastes raw");
+    }
+
+    /// Finding 1 (review, C1): `--toggle-post-process` and macOS SIGUSR1 keep
+    /// their meaning after the second shortcut became "without cleanup".
+    #[test]
+    fn c1_external_cleanup_triggers_still_clean_when_cleanup_is_on() {
+        use crate::signal_handle::cli_binding;
+        let mut on = get_default_settings();
+        on.post_process_enabled = true;
+        let off = get_default_settings();
+        let cli = cli_binding(&["voce".into(), "--toggle-post-process".into()]).unwrap();
+        let mut entries = vec![("--toggle-post-process", cli)];
+        #[cfg(target_os = "macos")]
+        entries.push((
+            "SIGUSR1",
+            crate::signal_handle::signal_binding(signal_hook::consts::SIGUSR1)
+                .unwrap()
+                .0,
+        ));
+        for (entry, binding) in entries {
+            assert!(super::ACTION_MAP.contains_key(binding), "{entry}");
+            let action = TranscribeAction::for_binding(binding);
+            assert!(action.cleans(&on), "{entry} cleans when cleanup is on");
+            assert!(!action.cleans(&off), "{entry} is raw when cleanup is off");
+        }
+        let main = cli_binding(&["voce".into(), "--toggle-transcription".into()]);
+        assert_eq!(main, Some("transcribe"));
+        assert_eq!(cli_binding(&["voce".into(), "--cancel".into()]), None);
     }
 }
 
