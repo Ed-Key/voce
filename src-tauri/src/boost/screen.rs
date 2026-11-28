@@ -81,6 +81,21 @@ pub fn set_wanted(on: bool) {
     WANTED.store(on, Ordering::Relaxed);
 }
 
+/// The Names setting (`screen_names`, onboarding row 24). Off: no window is
+/// walked for names and nothing stays cached.
+static ENABLED: AtomicBool = AtomicBool::new(true);
+
+pub fn set_enabled(on: bool) {
+    ENABLED.store(on, Ordering::Relaxed);
+    if !on {
+        with_cache(|c| *c = Cache::default());
+    }
+}
+
+fn walks_allowed() -> bool {
+    WANTED.load(Ordering::Relaxed) && ENABLED.load(Ordering::Relaxed)
+}
+
 fn with_cache<R>(f: impl FnOnce(&mut Cache) -> R) -> R {
     let mut guard = CACHE.lock().unwrap_or_else(|p| p.into_inner());
     f(guard.get_or_insert_with(Cache::default))
@@ -95,24 +110,35 @@ pub fn changed(pid: i32) {
 
 /// Ask for a walk of `pid`'s window; repeated asks within DEBOUNCE merge.
 pub fn trigger(pid: i32) {
-    if pid <= 0 || pid == std::process::id() as i32 || !WANTED.load(Ordering::Relaxed) {
+    if pid <= 0 || pid == std::process::id() as i32 || !walks_allowed() {
         return;
     }
     let tx = TRIGGERS.get_or_init(|| {
         let (tx, rx) = mpsc::channel::<i32>();
         let _ = std::thread::Builder::new()
             .name("boost-list".into())
-            .spawn(move || {
-                while let Ok(pid) = rx.recv() {
-                    match debounce(&rx, pid) {
-                        Some(pid) => refresh(pid),
-                        None => return,
-                    }
-                }
-            });
+            .spawn(move || while next_walk(&rx, &mut refresh) {});
         Mutex::new(tx)
     });
     let _ = tx.lock().unwrap_or_else(|p| p.into_inner()).send(pid);
+}
+
+/// One turn of the walk worker: wait for a trigger, debounce, then walk,
+/// unless Names was switched off meanwhile (a trigger queued before the
+/// switch reads nothing). False once the channel closed.
+fn next_walk(rx: &mpsc::Receiver<i32>, walk: &mut dyn FnMut(i32)) -> bool {
+    let Ok(pid) = rx.recv() else {
+        return false;
+    };
+    match debounce(rx, pid) {
+        Some(pid) => {
+            if walks_allowed() {
+                walk(pid);
+            }
+            true
+        }
+        None => false,
+    }
 }
 
 /// Wait until triggers stop for DEBOUNCE; the newest pid wins. None when
@@ -143,6 +169,10 @@ fn refresh(pid: i32) {
         .collect();
     let names = rank(&texts);
     debug!("Boost list: {} names cached for a window", names.len());
+    // Switched off while this walk ran: keep nothing.
+    if !ENABLED.load(Ordering::Relaxed) {
+        return;
+    }
     match walked.reason {
         // A secure field is focused: nothing from this window may be used.
         "secure_field" => with_cache(|c| c.store_walk(pid, started_gen, walked.title, Vec::new())),
@@ -170,6 +200,9 @@ fn frontmost_pid() -> Option<i32> {
 /// Key-down: the cached names of the frontmost app's window, at once.
 /// Also asks for a fresh walk for the next dictation.
 pub fn cached_for_frontmost() -> Vec<Candidate> {
+    if !ENABLED.load(Ordering::Relaxed) {
+        return Vec::new();
+    }
     let Some(pid) = frontmost_pid() else {
         return Vec::new();
     };
@@ -196,7 +229,7 @@ pub fn watch() {
                 if let Some(pid) = frontmost_pid() {
                     // The warm-up goes first on the walker's thread, so a
                     // Chromium or Electron tree is asked for before the walk.
-                    if WANTED.load(Ordering::Relaxed) {
+                    if walks_allowed() {
                         super::ax::warm(pid);
                     }
                     changed(pid);
@@ -382,5 +415,40 @@ mod tests {
         assert!(t.elapsed() >= DEBOUNCE);
         drop(tx);
         assert_eq!(debounce(&rx, 1), None);
+    }
+
+    /// The Names switch and WANTED are process-wide.
+    static NAMES: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn onboarding_row24_names_off_stops_walks_and_drops_the_cache() {
+        let _serial = NAMES.lock().unwrap_or_else(|p| p.into_inner());
+        set_wanted(true);
+        with_cache(|c| c.store(4242, "Chat".into(), names(&["Priya"])));
+        assert!(walks_allowed());
+        set_enabled(false);
+        assert!(!walks_allowed(), "no window reads while off");
+        assert!(with_cache(|c| c.for_app(4242)).is_empty(), "cache dropped");
+        assert!(cached_for_frontmost().is_empty(), "key-down gets no names");
+        // A relaunch starts with an empty RAM cache and the stored setting.
+        set_enabled(true);
+        set_wanted(false);
+    }
+
+    #[test]
+    fn review13_a_walk_queued_before_names_went_off_reads_nothing() {
+        let _serial = NAMES.lock().unwrap_or_else(|p| p.into_inner());
+        set_wanted(true);
+        let (tx, rx) = mpsc::channel::<i32>();
+        tx.send(77).unwrap(); // queued while Names was on
+        set_enabled(false);
+        let mut walked = Vec::new();
+        assert!(next_walk(&rx, &mut |pid| walked.push(pid)));
+        assert!(walked.is_empty(), "no window read after the switch");
+        set_enabled(true);
+        tx.send(78).unwrap();
+        assert!(next_walk(&rx, &mut |pid| walked.push(pid)));
+        assert_eq!(walked, vec![78]);
+        set_wanted(false);
     }
 }

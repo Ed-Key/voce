@@ -17,8 +17,8 @@ const FRAMES: [string, string][] = [
   ["models", "section=models"],
   ["advanced-top", "section=advanced"],
   ["advanced-bottom", "section=advanced&scroll=bottom"],
-  ["post-top", "section=postprocessing"],
-  ["post-bottom", "section=postprocessing&scroll=bottom"],
+  ["cleanup-top", "section=cleanup"],
+  ["cleanup-bottom", "section=cleanup&scroll=bottom"],
   ["about", "section=about"],
   ["general-light", "section=general&theme=light"],
   ["history-light", "section=history&theme=light"],
@@ -52,7 +52,8 @@ test("nav puts content first, then settings, then About", async ({ page }) => {
     "history",
     "general",
     "models",
-    "postprocessing",
+    "cleanup",
+    "storage",
     "advanced",
     "about",
   ]);
@@ -68,7 +69,8 @@ test("Memory shows in the nav only with Experimental features on", async ({
     "history",
     "general",
     "models",
-    "postprocessing",
+    "cleanup",
+    "storage",
     "advanced",
     "about",
   ]);
@@ -110,4 +112,24 @@ test("calls show human durations", async ({ page }) => {
   await open(page, "section=calls");
   await expect(page.getByText("1 hr 18 min")).toBeVisible();
   await expect(page.getByText("9 sec")).toBeVisible();
+});
+
+test("keyboard activation of a nav entry moves the highlight with the page", async ({
+  page,
+}) => {
+  await open(page, "section=general");
+  const cleanup = page.locator('nav [data-section="cleanup"]');
+  await cleanup.focus();
+  await page.keyboard.press("Enter");
+  await expect(cleanup).toHaveAttribute("aria-current", "page");
+  await expect(
+    page.locator('nav [data-section="general"]'),
+  ).not.toHaveAttribute("aria-current", "page");
+  await expect(page.locator(".v-ph h1").first()).toHaveText("Cleanup");
+  await page.locator('nav [data-section="storage"]').focus();
+  await page.keyboard.press("Space");
+  await expect(page.locator('nav [data-section="storage"]')).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
 });

@@ -17,6 +17,11 @@ interface HandyKeysShortcutInputProps {
   grouped?: boolean;
   shortcutId: string;
   disabled?: boolean;
+  /** Overrides the binding's own name and description. */
+  title?: string;
+  description?: string;
+  /** Hide the reset-to-default button. */
+  hideReset?: boolean;
 }
 
 interface HandyKeysEvent {
@@ -31,6 +36,9 @@ export const HandyKeysShortcutInput: React.FC<HandyKeysShortcutInputProps> = ({
   grouped = false,
   shortcutId,
   disabled = false,
+  title,
+  description,
+  hideReset = false,
 }) => {
   const { t } = useTranslation();
   const { getSetting, updateBinding, resetBinding, isUpdating, isLoading } =
@@ -196,8 +204,11 @@ export const HandyKeysShortcutInput: React.FC<HandyKeysShortcutInputProps> = ({
     if (!isRecording) return;
 
     const handleClickOutside = (e: MouseEvent) => {
+      // The starting click can land on key caps React has replaced; a
+      // detached target is not a click outside.
       if (
         shortcutRef.current &&
+        (e.target as Node).isConnected &&
         !shortcutRef.current.contains(e.target as Node)
       ) {
         cancelRecording();
@@ -317,17 +328,19 @@ export const HandyKeysShortcutInput: React.FC<HandyKeysShortcutInputProps> = ({
 
   return (
     <SettingContainer
-      title={translatedName}
-      description={translatedDescription}
+      title={title ?? translatedName}
+      description={description ?? translatedDescription}
       descriptionMode={descriptionMode}
       grouped={grouped}
       disabled={disabled}
       layout="horizontal"
     >
-      <ResetButton
-        onClick={() => resetBinding(shortcutId)}
-        disabled={isUpdating(`binding_${shortcutId}`)}
-      />
+      {!hideReset && (
+        <ResetButton
+          onClick={() => resetBinding(shortcutId)}
+          disabled={isUpdating(`binding_${shortcutId}`)}
+        />
+      )}
       {isRecording ? (
         <KeyCaps ref={shortcutRef} combo={formatCurrentKeys()} recording />
       ) : (

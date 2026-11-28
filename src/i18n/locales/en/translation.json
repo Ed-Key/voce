@@ -13,11 +13,12 @@
     "general": "General",
     "models": "Models",
     "advanced": "Advanced",
-    "postProcessing": "Post Process",
     "history": "History",
     "debug": "Debug",
     "about": "About",
-    "model": "Model"
+    "model": "Model",
+    "storage": "Storage",
+    "cleanup": "Cleanup"
   },
   "onboarding": {
     "subtitle": "To get started, choose a transcription model",
@@ -97,28 +98,249 @@
         "description": "A large, slower, but very accurate multilingual model."
       }
     },
-    "errors": {
-      "selectModel": "Failed to select model"
-    },
     "permissions": {
-      "title": "Permissions Required",
-      "description": "Voce needs a couple of permissions to work properly.",
+      "title": "Allow two things",
+      "description": "macOS asks you to confirm each one.",
+      "allow": "Allow",
+      "allowed": "Allowed",
+      "waiting": "Waiting",
+      "checkFailed": "Could not check the permissions.",
       "microphone": {
-        "title": "Microphone Access",
-        "description": "Required to hear your voice for transcription."
+        "title": "Microphone",
+        "description": "Hears you only while you hold the shortcut.",
+        "pane": "Microphone",
+        "denied": "Microphone access is off. Turn Voce on there, then retry."
       },
       "accessibility": {
-        "title": "Accessibility Access",
-        "description": "Required to type transcribed text into your applications."
+        "title": "Accessibility",
+        "description": "Pastes your words into the app you are using.",
+        "pane": "Accessibility",
+        "denied": "Still off. Turn Voce on there, then retry."
       },
-      "grant": "Grant Permission",
-      "granted": "Granted",
-      "waiting": "Waiting...",
-      "allGranted": "All set!",
-      "errors": {
-        "checkFailed": "Failed to check permissions. Please try again.",
-        "requestFailed": "Failed to request permission. Please try again."
+      "sys": {
+        "settings": "System Settings",
+        "privacy": "Privacy & Security",
+        "app": "Voce",
+        "hint": "Turn Voce on there. This page updates by itself."
       }
+    },
+    "back": "Back",
+    "continue": "Continue",
+    "cancel": "Cancel",
+    "retry": "Retry",
+    "stepOf": "Step {{step}} of {{total}}",
+    "mb": "{{mb}} MB",
+    "gb": "{{gb}} GB",
+    "ofMb": "{{done}} of {{total}} MB",
+    "etaSeconds_one": "about {{count}} s left",
+    "etaSeconds_other": "about {{count}} s left",
+    "etaMinutes_one": "about {{count}} min left",
+    "etaMinutes_other": "about {{count}} min left",
+    "welcome": {
+      "title": "Hold a key, talk, and Voce types it wherever your cursor is.",
+      "stepsLabel": "Setup steps",
+      "steps": {
+        "access": "Allow access",
+        "model": "Speech model",
+        "cleanup": "Cleanup",
+        "try": "Try it",
+        "names": "Names",
+        "storage": "Storage"
+      },
+      "start": "Get started",
+      "note": "A few minutes, mostly downloading. Speech is turned into text on this Mac."
+    },
+    "speech": {
+      "title": "Download a speech model",
+      "description": "It turns your voice into text, on this Mac.",
+      "languages_one": "{{count}} language",
+      "languages_other": "{{count}} languages",
+      "live": "Live",
+      "downloaded": "Downloaded",
+      "download": "Download {{mb}} MB",
+      "keepGoing": "You can keep going while it downloads.",
+      "stopped": "Stopped at {{done}} of {{total}} MB. Check your connection, then retry.",
+      "verifying": "Checking the download",
+      "extracting": "Unpacking"
+    },
+    "cleanup": {
+      "title": "Clean up what you say",
+      "description": "Drops filler words and fixes punctuation before Voce pastes.",
+      "sample": "<s>um so</s> I think we should <s>uh</s> move the <s>the</s> standup to thursday, <s>like,</s> at ten",
+      "found": "Found",
+      "s1": {
+        "name": "Voce cleanup",
+        "model": "s1-mini",
+        "description": "Runs on this Mac. {{mb}} MB download.",
+        "short": "Runs on this Mac."
+      },
+      "servers": {
+        "lm_studio": "LM Studio",
+        "ollama": "Ollama"
+      },
+      "local": {
+        "description": "Uses a model you already have in {{name}}.",
+        "short": "Uses a model you have in {{name}}."
+      },
+      "cloud": {
+        "name": "Cloud service",
+        "description": "Your own key for OpenAI, Anthropic and others. Text is sent to them.",
+        "keyPlaceholder": "Paste your API key",
+        "keyLabel": "API key",
+        "short": "Your own key. Text is sent to them."
+      },
+      "off": {
+        "name": "Off",
+        "description": "Paste exactly what you said."
+      },
+      "test": {
+        "title": "Live test",
+        "youSay": "You say",
+        "vocePastes": "Voce pastes",
+        "afterDownload": "Starts after the download",
+        "runsItself": "The test runs by itself when the model is ready.",
+        "testingHere": "Testing on this Mac",
+        "testingWith": "Testing with {{name}}",
+        "passed": "Passed in {{s}} s",
+        "failed": "Failed",
+        "off": "No cleanup",
+        "waitingKey": "Waiting for a key",
+        "pasteKey": "Paste a key and the test runs by itself.",
+        "runAgain": "Run again",
+        "startingHere": "Starting cleanup on this Mac"
+      },
+      "errors": {
+        "download": {
+          "title": "The download stopped",
+          "body": "Check your internet connection, then retry. It picks up where it left off."
+        },
+        "start_failed": {
+          "title": "Voce cleanup could not start",
+          "body": "Retry, or pick another option."
+        },
+        "unreachable": {
+          "title": "{{name}} is not answering",
+          "body": "Open {{name}}, start its local server, then retry."
+        },
+        "cloudUnreachable": {
+          "title": "{{name}} could not be reached",
+          "body": "Check your internet connection, then retry."
+        },
+        "timeout": {
+          "title": "No answer in 10 seconds",
+          "body": "{{name}} took too long. Retry, or pick another option."
+        },
+        "empty": {
+          "title": "The answer came back empty",
+          "body": "{{name}} returned no text. Try another model, then retry."
+        },
+        "malformed": {
+          "title": "The answer could not be read",
+          "body": "{{name}} sent something Voce does not understand. Try another model, then retry."
+        },
+        "hijack": {
+          "title": "It answered instead of cleaning up",
+          "body": "The model replied to the sentence instead of fixing it. Try another model, then retry."
+        },
+        "key_rejected": {
+          "title": "{{name}} did not accept this key",
+          "body": "Copy the whole key again from your {{name}} account, then retry."
+        },
+        "unknown": {
+          "title": "The test did not finish",
+          "body": "Retry, or pick another option."
+        }
+      },
+      "retryDownload": "Retry download",
+      "openServer": "Open {{name}}",
+      "useServer": "Use {{name}}",
+      "turnOff": "Turn cleanup off",
+      "unlockNote": "Continue unlocks when the test passes.",
+      "later": "Set up later",
+      "saveFailed": "Could not save the cleanup choice. Try again.",
+      "stopped": "Stopped at {{done}} of {{total}} MB",
+      "apple": {
+        "name": "Apple Intelligence",
+        "description": "Runs on this Mac with Apple's model."
+      }
+    },
+    "try": {
+      "title": "Try it",
+      "description": "Hold both keys, say anything, let go.",
+      "doneTitle": "That's all there is to it",
+      "doneDescription": "It works the same in every app.",
+      "keysLabel": "Option plus Space",
+      "optionGlyph": "⌥",
+      "option": "option",
+      "space": "space",
+      "plus": "+",
+      "listening": "<b>Listening.</b> Let go when you are done.",
+      "working": "Typing it out.",
+      "changeKeys": "Change the keys anytime in Settings.",
+      "finishing": "Finishing the speech model download.",
+      "finishingOf": "Finishing the speech model download, {{done}} of {{total}} MB.",
+      "placeholder": "Your words land here",
+      "padLabel": "Practice field",
+      "skip": "Skip",
+      "again": "Try again",
+      "pickModel": "Pick another model",
+      "errors": {
+        "noSpeech": "Voce did not hear anything. Check the microphone, then try again.",
+        "failed": "Something went wrong turning that into text.",
+        "shortcut": "Option+Space could not be turned on. Another app may use it.",
+        "download": "The speech model download stopped.",
+        "model": "The speech model did not load.",
+        "taken": "{{keys}} is used by another app. Pick other keys for Voce."
+      },
+      "newKeys": "Dictate",
+      "newKeysHint": "Click the keys, then press new ones.",
+      "ready": "Ready in {{time}}",
+      "readyNoTime": "Ready",
+      "ms": "{{n}} ms",
+      "s": "{{n}} s"
+    },
+    "names": {
+      "title": "Names come out spelled right",
+      "description": "Voce reads the names in the window you are typing in.",
+      "beats": {
+        "1": "You open a window",
+        "2": "Voce reads its names",
+        "3": "You talk",
+        "4": "Names come out right"
+      },
+      "filmLabel": "Example: opening Messages and replying",
+      "found": "Names Voce found",
+      "holding": "Holding <kbd>⌥ option</kbd><kbd>space</kbd>",
+      "without": "Without it: Sure <s>Pria</s>, I'll check the <s>Cooper Netties</s> upgrade today.",
+      "setting": "Read names on screen",
+      "settingHint": "Skips password fields. What it reads stays on your Mac.",
+      "demo": {
+        "search": "Search",
+        "priya": "Priya Raman",
+        "priyaInitials": "PR",
+        "priyaTime": "9:41 AM",
+        "priyaPreview": "Can you look at the Kubernetes…",
+        "marcus": "Marcus Chen",
+        "marcusInitials": "MC",
+        "marcusTime": "9:12 AM",
+        "marcusPreview": "Sounds good, see you then",
+        "lena": "Lena Okafor",
+        "lenaInitials": "LO",
+        "lenaTime": "Tuesday",
+        "lenaPreview": "New mocks are up",
+        "kubernetes": "Kubernetes",
+        "stamp": "<b>Today</b> 9:41 AM",
+        "outgoing": "Morning! Need anything from me?",
+        "incoming": "Can you look at the <nm>Kubernetes</nm> upgrade before Friday?",
+        "spoken": "Sure Priya, I'll check the Kubernetes upgrade today.",
+        "placeholder": "iMessage",
+        "typed": "Sure <hit>Priya</hit>, I'll check the <hit>Kubernetes</hit> upgrade today."
+      }
+    },
+    "storage": {
+      "title": "What Voce keeps on your Mac",
+      "description": "You can find this later in Settings.",
+      "finish": "Finish"
     }
   },
   "modelSelector": {
@@ -178,8 +400,8 @@
             "description": "The keyboard shortcut to cancel the current recording."
           },
           "transcribe_with_post_process": {
-            "name": "Post-Processing Hotkey",
-            "description": "Optional: A dedicated hotkey that always applies AI post-processing to your transcription."
+            "name": "Dictate without cleanup",
+            "description": "Pastes exactly what you said."
           }
         },
         "errors": {
@@ -421,60 +643,6 @@
         }
       }
     },
-    "postProcessing": {
-      "hotkey": {
-        "title": "Hotkey"
-      },
-      "api": {
-        "title": "API (OpenAI compatible)",
-        "provider": {
-          "title": "Provider",
-          "description": "Select an OpenAI-compatible provider."
-        },
-        "appleIntelligence": {
-          "unavailable": "Apple Intelligence is not available on this device. Requires an Apple Silicon Mac running macOS Tahoe (26.0) or later with Apple Intelligence enabled in System Settings."
-        },
-        "baseUrl": {
-          "title": "Base URL",
-          "description": "API base URL for the selected provider. Only the custom provider can be edited.",
-          "placeholder": "https://api.openai.com/v1"
-        },
-        "apiKey": {
-          "title": "API Key",
-          "description": "API key for the selected provider.",
-          "placeholder": "sk-..."
-        },
-        "model": {
-          "title": "Model",
-          "descriptionCustom": "Provide the model identifier expected by your custom endpoint.",
-          "descriptionDefault": "Choose a model exposed by the selected provider.",
-          "placeholderWithOptions": "Search or select a model",
-          "placeholderNoOptions": "Type a model name",
-          "refreshModels": "Refresh models"
-        }
-      },
-      "prompts": {
-        "title": "Prompt",
-        "selectedPrompt": {
-          "title": "Selected Prompt",
-          "description": "Select a template for refining transcriptions or create a new one. Use ${output} inside the prompt text to reference the captured transcript."
-        },
-        "noPrompts": "No prompts available",
-        "selectPrompt": "Select a prompt",
-        "createNew": "Create New Prompt",
-        "promptLabel": "Prompt Label",
-        "promptLabelPlaceholder": "Enter prompt name",
-        "promptInstructions": "Prompt Instructions",
-        "promptInstructionsPlaceholder": "Write the instructions to run after transcription. Example: Improve grammar and clarity for the following text: ${output}",
-        "promptTip": "Tip: Use <code>${output}</code> to insert the transcribed text in your prompt.",
-        "updatePrompt": "Update Prompt",
-        "deletePrompt": "Delete Prompt",
-        "createPrompt": "Create Prompt",
-        "cancel": "Cancel",
-        "selectToEdit": "Select a prompt above to view and edit its details.",
-        "createFirst": "Click 'Create New Prompt' above to create your first post-processing prompt."
-      }
-    },
     "history": {
       "title": "History",
       "openFolder": "Open Recordings Folder",
@@ -529,10 +697,18 @@
       },
       "onboardingPreview": {
         "title": "Preview Onboarding",
-        "description": "Preview onboarding screens without changing permissions, models, or completion state",
-        "permissionsButton": "Permissions",
-        "modelsButton": "Model Selection",
-        "exitButton": "Exit Preview"
+        "description": "Preview onboarding screens without changing permissions, models, or saved progress",
+        "exitButton": "Exit Preview",
+        "pick": "Show a step",
+        "steps": {
+          "welcome": "Welcome",
+          "permissions": "Permissions",
+          "speech": "Speech model",
+          "cleanup": "Cleanup",
+          "try": "Try it",
+          "names": "Names",
+          "storage": "Storage"
+        }
       },
       "soundTheme": {
         "label": "Sound Theme",
@@ -564,10 +740,6 @@
       "clamshellMicrophone": {
         "title": "Clamshell Microphone",
         "description": "Microphone to use when laptop lid is closed"
-      },
-      "postProcessingToggle": {
-        "label": "Post Processing",
-        "description": "Enable AI-powered text refinement after transcription"
       },
       "muteWhileRecording": {
         "label": "Mute While Recording",
@@ -666,6 +838,105 @@
       },
       "checkNow": "Check now",
       "versionLine": "Version {{version}}"
+    },
+    "cleanup": {
+      "title": "Cleanup",
+      "switch": {
+        "label": "Cleanup",
+        "sub": "Cleans your words before Voce pastes them.",
+        "pending": "Turns on when the live test passes."
+      },
+      "early": {
+        "label": "Clean while you talk",
+        "sub": "Pastes sooner by cleaning as you speak. Same result.",
+        "unsupported": "Works with Voce cleanup and local servers, not cloud services."
+      },
+      "model": "Model",
+      "style": {
+        "title": "Style",
+        "preview": "Preview",
+        "otherModels": "Style works with Voce cleanup. Other models follow Custom instructions.",
+        "styling": {
+          "label": "Style",
+          "casual": "Casual",
+          "semi-casual": "Semi-casual",
+          "semi-formal": "Semi-formal",
+          "formal": "Formal"
+        },
+        "structure": {
+          "label": "Structure",
+          "prose": "Prose",
+          "lists": "Lists"
+        },
+        "context": {
+          "label": "Context",
+          "general": "General",
+          "email": "Email"
+        },
+        "samples": {
+          "casual": {
+            "prose": "Deck's pretty much done. Sending it tonight so we can go over it tomorrow morning.",
+            "list": [
+              "Deck's pretty much done",
+              "Sending it tonight",
+              "Going over it tomorrow morning"
+            ],
+            "hi": "Hey,",
+            "bye": "Cheers"
+          },
+          "semi-casual": {
+            "prose": "The deck is pretty much done. I'll send it tonight so we can go over it tomorrow morning.",
+            "list": [
+              "The deck is pretty much done",
+              "I'll send it tonight",
+              "We can go over it tomorrow morning"
+            ],
+            "hi": "Hi,",
+            "bye": "Thanks"
+          },
+          "semi-formal": {
+            "prose": "The deck is nearly done. I'll send it tonight so we can review it tomorrow morning.",
+            "list": [
+              "The deck is nearly done.",
+              "I'll send it tonight.",
+              "We can review it tomorrow morning."
+            ],
+            "hi": "Hi,",
+            "bye": "Thanks,"
+          },
+          "formal": {
+            "prose": "The presentation is nearly complete. I will send it this evening so that we can review it tomorrow morning.",
+            "list": [
+              "The presentation is nearly complete.",
+              "I will send it this evening.",
+              "We can review it tomorrow morning."
+            ],
+            "hi": "Hello,",
+            "bye": "Kind regards,"
+          }
+        }
+      },
+      "shortcuts": "Shortcuts",
+      "dictate": {
+        "label": "Dictate",
+        "sub": "Cleans when cleanup is on."
+      },
+      "raw": {
+        "label": "Dictate without cleanup",
+        "sub": "Pastes exactly what you said."
+      },
+      "advanced": {
+        "title": "Advanced",
+        "baseUrl": "Base URL",
+        "model": "Model name",
+        "apiKey": "API key",
+        "keySaved": "Saved in Keychain",
+        "noKey": "No key",
+        "replace": "Replace",
+        "add": "Add",
+        "instructions": "Custom instructions",
+        "instructionsSub": "For models other than s1-mini."
+      }
     }
   },
   "footer": {
@@ -1233,5 +1504,78 @@
     "newEntry": "New memory entry",
     "addTo": "Add to {{group}}",
     "unsaved": "Not saved."
+  },
+  "storage": {
+    "title": "Storage",
+    "reveal": "Reveal in Finder",
+    "total": "Total",
+    "share": "used by Voce, {{pct}}% of this Mac",
+    "free": "{{gb}} GB free",
+    "ofDisk": "of {{gb}} GB",
+    "pictureLabel": "Voce uses {{size}} of this Mac's {{disk}} disk",
+    "measuring": "Measuring",
+    "failed": "Could not measure the storage.",
+    "removeFailed": "That did not work. Try again.",
+    "manageInCalls": "Manage in Calls",
+    "items": {
+      "speech_model": {
+        "name": "Speech model",
+        "detail": "{{name}}",
+        "detailInUse": "{{name}} · in use",
+        "action": "Remove",
+        "confirmTitle": "Remove {{name}}?",
+        "confirmBody": "You can download it again in Models.",
+        "confirmButton": "Remove {{size}}"
+      },
+      "meeting_model": {
+        "name": "Meeting model",
+        "detail": "Live transcript during calls",
+        "action": "Remove",
+        "confirmTitle": "Remove the meeting model?",
+        "confirmBody": "Calls lose their live transcript until you download it again.",
+        "confirmButton": "Remove {{size}}"
+      },
+      "cleanup_model": {
+        "name": "Cleanup model",
+        "detail": "Voce cleanup s1-mini",
+        "action": "Remove",
+        "confirmTitle": "Remove the cleanup model?",
+        "confirmBody": "Cleanup stops until you download it again or pick another option.",
+        "confirmButton": "Remove {{size}}"
+      },
+      "runtime": {
+        "name": "Runtime",
+        "detail": "Runs the models · required"
+      },
+      "recordings": {
+        "name": "Saved recordings",
+        "detail": {
+          "never": "Not kept",
+          "preserve_limit": "Kept with history",
+          "days3": "Last 3 days",
+          "weeks2": "Last 2 weeks",
+          "months3": "Last 3 months"
+        },
+        "action": "Delete",
+        "confirmTitle": "Delete saved recordings?",
+        "confirmBody": "History keeps the text, but you can no longer play or retry these.",
+        "confirmButton": "Delete {{size}}"
+      },
+      "history": {
+        "name": "History",
+        "detail_one": "{{count}} dictation",
+        "detail_other": "{{count}} dictations",
+        "action": "Clear",
+        "confirmTitle": "Clear history?",
+        "confirmBody_one": "{{count}} dictation is deleted. This cannot be undone.",
+        "confirmBody_other": "{{count}} dictations are deleted. This cannot be undone.",
+        "confirmButton": "Clear {{size}}"
+      },
+      "call_data": {
+        "name": "Call data",
+        "detail_one": "{{count}} call, delete it in Calls",
+        "detail_other": "{{count}} calls, delete them in Calls"
+      }
+    }
   }
 }

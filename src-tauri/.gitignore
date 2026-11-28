@@ -11,3 +11,7 @@
 # tauri.windows.conf.json on Windows, into /usr/lib/Handy (deb/rpm) via
 # tauri.conf.json on Linux.
 /transcribe-libs/
+
+# Staged by scripts/fetch-llama-server.sh: the cleanup sidecar (llama-server and
+# its dylibs), bundled by tauri.sidecar.conf.json in release builds.
+/binaries/

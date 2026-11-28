@@ -18,6 +18,11 @@ interface GlobalShortcutInputProps {
   grouped?: boolean;
   shortcutId: string;
   disabled?: boolean;
+  /** Overrides the binding's own name and description. */
+  title?: string;
+  description?: string;
+  /** Hide the reset-to-default button. */
+  hideReset?: boolean;
 }
 
 export const GlobalShortcutInput: React.FC<GlobalShortcutInputProps> = ({
@@ -25,6 +30,9 @@ export const GlobalShortcutInput: React.FC<GlobalShortcutInputProps> = ({
   grouped = false,
   shortcutId,
   disabled = false,
+  title,
+  description,
+  hideReset = false,
 }) => {
   const { t } = useTranslation();
   const { getSetting, updateBinding, resetBinding, isUpdating, isLoading } =
@@ -141,6 +149,9 @@ export const GlobalShortcutInput: React.FC<GlobalShortcutInputProps> = ({
     // Add click outside handler
     const handleClickOutside = async (e: MouseEvent) => {
       if (cleanup) return;
+      // The click that started recording lands here too, on key caps React
+      // has since replaced; a detached target is not a click outside.
+      if (!(e.target as Node).isConnected) return;
       const activeElement = shortcutRefs.current.get(editingShortcutId);
       if (activeElement && !activeElement.contains(e.target as Node)) {
         // Cancel shortcut recording and restore original binding
@@ -269,17 +280,19 @@ export const GlobalShortcutInput: React.FC<GlobalShortcutInputProps> = ({
 
   return (
     <SettingContainer
-      title={translatedName}
-      description={translatedDescription}
+      title={title ?? translatedName}
+      description={description ?? translatedDescription}
       descriptionMode={descriptionMode}
       grouped={grouped}
       disabled={disabled}
       layout="horizontal"
     >
-      <ResetButton
-        onClick={() => resetBinding(shortcutId)}
-        disabled={isUpdating(`binding_${shortcutId}`)}
-      />
+      {!hideReset && (
+        <ResetButton
+          onClick={() => resetBinding(shortcutId)}
+          disabled={isUpdating(`binding_${shortcutId}`)}
+        />
+      )}
       {editingShortcutId === shortcutId ? (
         <KeyCaps
           ref={(ref) => setShortcutRef(shortcutId, ref)}

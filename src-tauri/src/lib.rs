@@ -12,15 +12,19 @@ mod boost;
 mod calls;
 mod catalog;
 mod chinese_script;
+mod cleanup_setup;
 pub mod cli;
 mod clipboard;
 mod commands;
 mod early_cleanup;
 mod helpers;
 mod input;
+mod keychain;
 mod llm_client;
+mod local_llm;
 mod managers;
 mod memory;
+mod onboarding;
 mod overlay;
 mod paste_tx;
 pub mod portable;
@@ -28,6 +32,7 @@ mod secure_input;
 mod settings;
 mod shortcut;
 mod signal_handle;
+mod storage;
 mod transcription_coordinator;
 mod tray;
 mod tray_i18n;
@@ -398,8 +403,12 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     autostart::apply_autostart(app_handle, settings.autostart_enabled);
 
     // Load the local cleanup model in the background so the first dictation
-    // after login does not wait for it.
-    actions::warm_post_process_model(&settings);
+    // after login does not wait for it. Voce cleanup starts its server on
+    // demand instead (local_llm).
+    local_llm::init(app_handle);
+    if settings.post_process_provider_id != settings::VOCE_LOCAL_PROVIDER_ID {
+        actions::warm_post_process_model(&settings);
+    }
 
     // Create the recording overlay window (hidden by default)
     utils::create_recording_overlay(app_handle);
@@ -847,6 +856,28 @@ pub fn run(cli_args: CliArgs) {
             commands::history::update_history_limit,
             commands::history::update_recording_retention_period,
             helpers::clamshell::is_laptop,
+            onboarding::get_onboarding_state,
+            onboarding::complete_onboarding_step,
+            onboarding::set_onboarding_pending_model,
+            onboarding::begin_onboarding_try,
+            onboarding::end_onboarding_try,
+            onboarding::change_screen_names_setting,
+            local_llm::voce_cleanup_status,
+            local_llm::download_voce_cleanup_model,
+            local_llm::cancel_voce_cleanup_download,
+            cleanup_setup::detect_local_cleanup_servers,
+            cleanup_setup::test_cleanup,
+            cleanup_setup::save_cleanup_choice,
+            cleanup_setup::turn_cleanup_off,
+            cleanup_setup::forget_cleanup_tests,
+            cleanup_setup::list_cleanup_models,
+            cleanup_setup::get_early_cleanup_state,
+            local_llm::warm_voce_cleanup,
+            local_llm::cancel_voce_cleanup_warm,
+            cleanup_setup::change_early_cleanup_setting,
+            cleanup_setup::change_s1_control_setting,
+            storage::get_storage_report,
+            storage::remove_storage_item,
         ])
         .events(collect_events![
             managers::history::HistoryUpdatePayload,
@@ -1114,6 +1145,7 @@ pub fn run(cli_args: CliArgs) {
 
             // The boost list builder's name cache: walks the frontmost window
             // on activation, focus and title changes (docs/boost-lifecycle.md).
+            boost::screen::set_enabled(settings::get_settings(&app_handle).screen_names);
             boost::screen::watch();
 
             // Populate the overlay-enabled cache from initial settings so the
@@ -1161,6 +1193,9 @@ pub fn run(cli_args: CliArgs) {
             tauri::WindowEvent::CloseRequested { api, .. } => {
                 api.prevent_close();
                 let _res = window.hide();
+                if window.label() == "main" {
+                    onboarding::main_window_closed(window.app_handle());
+                }
 
                 #[cfg(target_os = "macos")]
                 {
@@ -1214,6 +1249,8 @@ pub fn run(cli_args: CliArgs) {
         }
         // Teardown transcribe.cpp before exit
         tauri::RunEvent::Exit => {
+            // Voce cleanup's llama-server sidecar.
+            local_llm::shutdown();
             if let Some(plugin) = app.try_state::<calls::plugin::PluginRuntime>() {
                 plugin.shutdown();
             }

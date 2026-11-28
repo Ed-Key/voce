@@ -657,6 +657,39 @@ impl HistoryManager {
         Ok(())
     }
 
+    /// Dictations kept (Storage page).
+    pub fn count_entries(&self) -> Result<usize> {
+        let conn = self.get_connection()?;
+        let n: i64 = conn.query_row("SELECT COUNT(*) FROM transcription_history", [], |r| {
+            r.get(0)
+        })?;
+        Ok(n as usize)
+    }
+
+    /// Storage "Saved recordings": delete the audio of every unsaved
+    /// dictation; the text stays, starred dictations keep theirs.
+    pub fn delete_unsaved_audio(&self) -> Result<usize> {
+        let conn = self.get_connection()?;
+        Self::expire_audio_with_conn(&conn, &self.recordings_dir, i64::MAX)
+    }
+
+    /// Storage "History": delete every unsaved dictation and its audio;
+    /// starred ones stay.
+    pub fn clear_unsaved(&self) -> Result<usize> {
+        let entries: Vec<(i64, String)> = {
+            let conn = self.get_connection()?;
+            let mut stmt =
+                conn.prepare("SELECT id, file_name FROM transcription_history WHERE saved = 0")?;
+            let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+            rows.collect::<std::result::Result<_, _>>()?
+        };
+        self.delete_entries_and_files(&entries)?;
+        for (id, _) in &entries {
+            let _ = (HistoryUpdatePayload::Deleted { id: *id }).emit(&self.app_handle);
+        }
+        Ok(entries.len())
+    }
+
     fn format_timestamp_title(&self, timestamp: i64) -> String {
         if let Some(utc_datetime) = DateTime::from_timestamp(timestamp, 0) {
             // Convert UTC to local timezone

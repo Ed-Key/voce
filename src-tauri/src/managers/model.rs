@@ -21,7 +21,8 @@ use tauri::{AppHandle, Emitter, Manager};
 
 mod download;
 
-use download::{HttpDownloadOutcome, DOWNLOAD_STALL_TIMEOUT};
+pub(crate) use download::HttpDownloadOutcome;
+use download::DOWNLOAD_STALL_TIMEOUT;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 pub enum EngineType {
@@ -1497,20 +1498,64 @@ impl ModelManager {
         let Some(pointer) = hf_cached_path(repo_id, revision, filename) else {
             return false;
         };
+        Self::delete_cached_pointer(&pointer)
+    }
+
+    /// Remove one snapshot file of an HF cache repo
+    /// (`<repo>/snapshots/<rev>/<file>`) and its blob, unless another
+    /// snapshot file may point at the same blob: when any part of the scan
+    /// fails (an unreadable revision, a link that cannot be resolved) the
+    /// blob stays. The repo folder is never removed here; only the emptied
+    /// revision folder goes.
+    fn delete_cached_pointer(pointer: &Path) -> bool {
         // Resolve the blob before the pointer goes away. On Windows the
         // pointer may be a plain file (hf-hub's symlink fallback renames the
         // blob into the snapshot), in which case there is no separate blob.
-        let is_symlink = fs::symlink_metadata(&pointer)
+        let is_symlink = fs::symlink_metadata(pointer)
             .map(|m| m.file_type().is_symlink())
             .unwrap_or(false);
-        if is_symlink {
-            if let Ok(blob) = fs::canonicalize(&pointer) {
-                info!("Deleting HF cache blob at: {:?}", blob);
-                let _ = fs::remove_file(&blob);
+        let blob = is_symlink.then(|| fs::canonicalize(pointer).ok()).flatten();
+        info!("Deleting HF cache file at: {:?}", pointer);
+        let deleted = fs::remove_file(pointer).is_ok();
+        if let Some(revision) = pointer.parent() {
+            let _ = fs::remove_dir(revision); // only when empty
+        }
+        let Some(repo_dir) = pointer.ancestors().nth(3).filter(|d| {
+            d.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with("models--"))
+        }) else {
+            return deleted;
+        };
+        if let Some(blob) = blob {
+            match Self::snapshot_targets(&repo_dir.join("snapshots")) {
+                // ponytail: another program writing a snapshot of this shared
+                // repo between this scan and the delete is not guarded; worst
+                // case it downloads that blob again (review 3, finding 1).
+                Ok(left) if !left.contains(&blob) => {
+                    info!("Deleting HF cache blob at: {:?}", blob);
+                    let _ = fs::remove_file(&blob);
+                }
+                Ok(_) => {}
+                Err(e) => warn!("Keeping an HF cache blob: the reference scan failed ({e})"),
             }
         }
-        info!("Deleting HF cache file at: {:?}", pointer);
-        fs::remove_file(&pointer).is_ok()
+        deleted
+    }
+
+    /// What every file under `snapshots/` resolves to. Any read or resolve
+    /// failure is an error: the list would be incomplete.
+    fn snapshot_targets(dir: &Path) -> std::io::Result<Vec<PathBuf>> {
+        let mut out = Vec::new();
+        for entry in fs::read_dir(dir)? {
+            let path = entry?.path();
+            if fs::symlink_metadata(&path)?.is_dir() {
+                out.extend(Self::snapshot_targets(&path)?);
+            } else {
+                out.push(fs::canonicalize(&path)?);
+            }
+        }
+        Ok(out)
     }
 
     fn auto_select_model_if_needed(&self) -> Result<()> {
@@ -1610,6 +1655,12 @@ impl ModelManager {
 
             // Skip hidden files
             if filename.starts_with('.') {
+                continue;
+            }
+            // Voce cleanup's language model is not a speech model. It lives
+            // in its own folder now; a copy left here by an older build must
+            // never become selectable as speech.
+            if filename == crate::local_llm::MODEL_FILE {
                 continue;
             }
 
@@ -2403,28 +2454,11 @@ impl ModelManager {
         if let ModelSource::HuggingFace { repo_id, revision } = &model_info.source {
             let is_alternate_quant =
                 Self::is_catalog_alternate_quant(repo_id, &model_info.filename);
-            let mut deleted = false;
-            if is_alternate_quant {
-                // Only this quant's own file: the snapshot pointer and its
-                // blob. The default (and any other quants) survive in the
-                // cache — the entry never owned more than its one file.
-                deleted |= Self::delete_hf_cache_file(repo_id, revision, &model_info.filename);
-            } else if let Some(file) = hf_cached_path(repo_id, revision, &model_info.filename) {
-                // Cached at <cache>/models--org--name/snapshots/<rev>/<file>; remove
-                // the whole repo dir (blobs + refs + snapshots). Per product decision,
-                // delete hard-removes from the shared HF cache.
-                if let Some(repo_dir) = file.ancestors().nth(3) {
-                    if repo_dir
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .is_some_and(|n| n.starts_with("models--"))
-                    {
-                        info!("Deleting HF cache repo at: {:?}", repo_dir);
-                        fs::remove_dir_all(repo_dir)?;
-                        deleted = true;
-                    }
-                }
-            }
+            // Only this entry's own file: its snapshot pointer and its blob
+            // unless another pointer shares it. Other quants of the repo (the
+            // one in use, perhaps) survive; the repo folder goes only once no
+            // file is left in it. Delete still removes from the shared cache.
+            let mut deleted = Self::delete_hf_cache_file(repo_id, revision, &model_info.filename);
             // Also remove a models-dir copy (mirror fallback / manual drop-in)
             // and any resumable partial next to it.
             for path in [
@@ -2842,6 +2876,24 @@ mod tests {
     }
 
     #[test]
+    fn review3_the_cleanup_model_is_never_a_speech_model() {
+        let temp_dir = TempDir::new().unwrap();
+        let models_dir = temp_dir.path().to_path_buf();
+        File::create(models_dir.join(crate::local_llm::MODEL_FILE))
+            .unwrap()
+            .write_all(b"GGUF")
+            .unwrap();
+        let mut models = HashMap::new();
+        ModelManager::discover_custom_transcribe_models(&models_dir, &mut models).unwrap();
+        assert!(
+            models
+                .values()
+                .all(|m| m.filename != crate::local_llm::MODEL_FILE),
+            "s1-mini is not listed as speech"
+        );
+    }
+
+    #[test]
     fn test_discover_custom_models_empty_dir() {
         let temp_dir = TempDir::new().unwrap();
         let models_dir = temp_dir.path().to_path_buf();
@@ -3012,6 +3064,63 @@ mod tests {
             push_gguf_str(&mut out, l);
         }
         fs::write(path, out).unwrap();
+    }
+
+    #[test]
+    fn onboarding_row26_removing_one_quant_keeps_the_other_and_shared_blobs() {
+        let cache = TempDir::new().unwrap();
+        let repo = cache.path().join("models--org--whisper-GGUF");
+        let blobs = repo.join("blobs");
+        fs::create_dir_all(&blobs).unwrap();
+        fs::write(blobs.join("q8"), b"q8").unwrap();
+        fs::write(blobs.join("q4"), b"q4").unwrap();
+        for rev in ["rev1", "rev2"] {
+            fs::create_dir_all(repo.join("snapshots").join(rev)).unwrap();
+        }
+        let link = |rev: &str, file: &str, blob: &str| {
+            let at = repo.join("snapshots").join(rev).join(file);
+            std::os::unix::fs::symlink(blobs.join(blob), &at).unwrap();
+            at
+        };
+        let q8 = link("rev1", "model-q8_0.gguf", "q8");
+        let q4 = link("rev1", "model-q4_k_m.gguf", "q4");
+        let q4_again = link("rev2", "model-q4_k_m.gguf", "q4");
+
+        // Remove the unused quant: the one in use and its blob stay.
+        assert!(ModelManager::delete_cached_pointer(&q8));
+        assert!(!blobs.join("q8").exists());
+        assert_eq!(fs::read(&q4).unwrap(), b"q4");
+        // A blob another revision still points at stays.
+        assert!(ModelManager::delete_cached_pointer(&q4));
+        assert_eq!(fs::read(&q4_again).unwrap(), b"q4");
+        // The last file goes with its blob; the repo folder stays.
+        assert!(ModelManager::delete_cached_pointer(&q4_again));
+        assert!(!blobs.join("q4").exists());
+        assert!(repo.exists(), "never removed on the scan alone");
+    }
+
+    #[test]
+    fn review2_n1_a_failed_reference_scan_keeps_the_blob() {
+        use std::os::unix::fs::PermissionsExt;
+        let cache = TempDir::new().unwrap();
+        let repo = cache.path().join("models--org--whisper-GGUF");
+        let blobs = repo.join("blobs");
+        fs::create_dir_all(&blobs).unwrap();
+        fs::write(blobs.join("q4"), b"q4").unwrap();
+        for rev in ["rev1", "rev2"] {
+            let dir = repo.join("snapshots").join(rev);
+            fs::create_dir_all(&dir).unwrap();
+            std::os::unix::fs::symlink(blobs.join("q4"), dir.join("model.gguf")).unwrap();
+        }
+        // rev2 still points at the blob but cannot be read.
+        let hidden = repo.join("snapshots").join("rev2");
+        fs::set_permissions(&hidden, fs::Permissions::from_mode(0o000)).unwrap();
+        let removed = ModelManager::delete_cached_pointer(&repo.join("snapshots/rev1/model.gguf"));
+        fs::set_permissions(&hidden, fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(removed);
+        assert_eq!(fs::read(blobs.join("q4")).unwrap(), b"q4", "blob kept");
+        assert_eq!(fs::read(hidden.join("model.gguf")).unwrap(), b"q4");
+        assert!(repo.exists());
     }
 
     #[test]

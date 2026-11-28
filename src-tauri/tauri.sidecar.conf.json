@@ -1,0 +1,20 @@
+{
+  "bundle": {
+    "macOS": {
+      "files": {
+        "MacOS/llama-server": "binaries/llama-server",
+        "MacOS/libllama-server-impl.dylib": "binaries/libllama-server-impl.dylib",
+        "MacOS/libllama-common.1.dylib": "binaries/libllama-common.1.dylib",
+        "MacOS/libmtmd.1.dylib": "binaries/libmtmd.1.dylib",
+        "MacOS/libllama.1.dylib": "binaries/libllama.1.dylib",
+        "MacOS/libggml.1.dylib": "binaries/libggml.1.dylib",
+        "MacOS/libggml-cpu.1.dylib": "binaries/libggml-cpu.1.dylib",
+        "MacOS/libggml-blas.1.dylib": "binaries/libggml-blas.1.dylib",
+        "MacOS/libggml-metal.1.dylib": "binaries/libggml-metal.1.dylib",
+        "MacOS/libggml-rpc.1.dylib": "binaries/libggml-rpc.1.dylib",
+        "MacOS/libggml-base.1.dylib": "binaries/libggml-base.1.dylib",
+        "Resources/licenses/llama.cpp-LICENSE": "binaries/llama.cpp-LICENSE"
+      }
+    }
+  }
+}

@@ -304,6 +304,7 @@ export function fixture(theme: string) {
   const replies: Record<string, unknown> = {
     get_app_settings: settings,
     get_default_settings: settings,
+    get_onboarding_state: { step: "done", pending_model: null },
     is_update_checks_locked: false,
     get_secure_input_status: { supported: false, active: false },
     get_available_microphones: [

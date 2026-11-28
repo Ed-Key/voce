@@ -276,6 +276,9 @@ export const useModelStore = create<ModelsStore>()(
       // Set up event listeners
       listen<DownloadProgress>("model-download-progress", (event) => {
         const progress = event.payload;
+        // The same event carries Voce cleanup's s1-mini download, which is
+        // not a speech model and never sends model-download-complete.
+        if (!get().models.some((m) => m.id === progress.model_id)) return;
         set(
           produce((state) => {
             state.downloadProgress[progress.model_id] = progress;

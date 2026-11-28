@@ -1,9 +1,10 @@
 import React from "react";
 import { useTranslation } from "react-i18next";
-import { Button } from "../../ui/Button";
+import { Dropdown } from "../../ui/Dropdown";
 import { SettingContainer } from "../../ui/SettingContainer";
+import { STEPS, type OnboardingStep } from "../../onboarding/api";
 
-export type OnboardingPreviewStep = "accessibility" | "model";
+export type OnboardingPreviewStep = Exclude<OnboardingStep, "done">;
 
 interface OnboardingPreviewProps {
   onPreview: (step: OnboardingPreviewStep) => void;
@@ -17,6 +18,7 @@ export const OnboardingPreview: React.FC<OnboardingPreviewProps> = ({
   grouped = false,
 }) => {
   const { t } = useTranslation();
+  const steps = STEPS.filter((s): s is OnboardingPreviewStep => s !== "done");
 
   return (
     <SettingContainer
@@ -25,22 +27,15 @@ export const OnboardingPreview: React.FC<OnboardingPreviewProps> = ({
       descriptionMode={descriptionMode}
       grouped={grouped}
     >
-      <div className="flex gap-2">
-        <Button
-          variant="secondary"
-          size="md"
-          onClick={() => onPreview("accessibility")}
-        >
-          {t("settings.debug.onboardingPreview.permissionsButton")}
-        </Button>
-        <Button
-          variant="secondary"
-          size="md"
-          onClick={() => onPreview("model")}
-        >
-          {t("settings.debug.onboardingPreview.modelsButton")}
-        </Button>
-      </div>
+      <Dropdown
+        options={steps.map((s) => ({
+          value: s,
+          label: t(`settings.debug.onboardingPreview.steps.${s}`),
+        }))}
+        selectedValue={null}
+        placeholder={t("settings.debug.onboardingPreview.pick")}
+        onSelect={(s) => onPreview(s as OnboardingPreviewStep)}
+      />
     </SettingContainer>
   );
 };

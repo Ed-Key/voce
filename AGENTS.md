@@ -19,6 +19,8 @@ cd src-tauri/resources/assistie && python3 -m pytest -q               # companio
 cd src-tauri/src/calls && python3 -m pytest -q test_observatory.py test_worker.py   # call worker tests
 ```
 
+The onboarding table (steps and resume, the cleanup test, Voce cleanup's llama-server sidecar, Keychain keys, Names, Storage, the main-key cleanup rule) and its tests are in `docs/onboarding-lifecycle.md`. Release builds stage the sidecar with `scripts/fetch-llama-server.sh`; local runs point `VOCE_LLAMA_SERVER` at a llama-server.
+
 Sign release builds with `APPLE_SIGNING_IDENTITY` (see README); ad-hoc builds lose macOS permissions on every rebuild.
 
 Regenerate `src/bindings.ts` after changing Tauri commands or settings: run a debug build with `HANDY_EXPORT_BINDINGS=1` (for example `HANDY_EXPORT_BINDINGS=1 ./src-tauri/target/debug/voce --list-models`).
