@@ -32,6 +32,7 @@ use crate::tray;
 
 /// Initialize shortcuts using the configured implementation
 pub fn init_shortcuts(app: &AppHandle) {
+    clear_init_failures();
     let user_settings = settings::load_or_create_app_settings(app);
 
     // Check which implementation to use
@@ -50,10 +51,85 @@ pub fn init_shortcuts(app: &AppHandle) {
                 settings.keyboard_implementation = KeyboardImplementation::Tauri;
                 settings::write_settings(app, settings);
 
+                clear_init_failures();
                 tauri_impl::init_shortcuts(app);
             }
         }
     }
+}
+
+/// A shortcut that is not registered because registering it failed
+/// (onboarding row 21).
+#[derive(Debug, Clone, PartialEq, Serialize, Type)]
+pub struct ShortcutFailure {
+    /// Binding id, e.g. `transcribe`.
+    pub id: String,
+    /// The key combination, e.g. `option+space`.
+    pub binding: String,
+    pub error: String,
+}
+
+static INIT_FAILURES: std::sync::Mutex<Vec<ShortcutFailure>> = std::sync::Mutex::new(Vec::new());
+
+/// Record a registration attempt: a failure replaces the binding's entry,
+/// a success (or an unregister) clears it, so the list is the current
+/// state, not the startup one.
+pub(crate) fn note_registration(binding: &ShortcutBinding, result: Result<(), &str>) {
+    let mut failures = INIT_FAILURES.lock().unwrap_or_else(|p| p.into_inner());
+    failures.retain(|f| f.id != binding.id);
+    let mut owned = OWNED.lock().unwrap_or_else(|p| p.into_inner());
+    match result {
+        Ok(()) => {
+            owned.insert(binding.id.clone(), binding.current_binding.clone());
+        }
+        Err(error) => failures.push(ShortcutFailure {
+            id: binding.id.clone(),
+            binding: binding.current_binding.clone(),
+            error: error.to_string(),
+        }),
+    }
+}
+
+/// A binding was unregistered: neither ours nor failing any more.
+pub(crate) fn note_unregistered(binding: &ShortcutBinding) {
+    INIT_FAILURES
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .retain(|f| f.id != binding.id);
+    OWNED
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .remove(&binding.id);
+}
+
+/// Bindings Voce registered and still holds (id -> key combination).
+static OWNED: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<String, String>>> =
+    std::sync::LazyLock::new(Default::default);
+
+/// Voce already holds exactly this binding, so registering it again would
+/// only fail as a duplicate (review 3, finding 4).
+fn already_owned(binding: &ShortcutBinding) -> bool {
+    OWNED
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .get(&binding.id)
+        .is_some_and(|combo| combo == &binding.current_binding)
+}
+
+/// The shortcuts that are not registered because registering them failed.
+pub fn init_failures() -> Vec<ShortcutFailure> {
+    INIT_FAILURES
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .clone()
+}
+
+fn clear_init_failures() {
+    INIT_FAILURES
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .clear();
+    OWNED.lock().unwrap_or_else(|p| p.into_inner()).clear();
 }
 
 /// Whether the recording lifecycle currently wants the cancel shortcut.
@@ -132,14 +208,22 @@ fn reconcile_cancel_shortcut(app: &AppHandle) {
 /// Register a shortcut using the appropriate implementation
 pub fn register_shortcut(app: &AppHandle, binding: ShortcutBinding) -> Result<(), String> {
     let settings = get_settings(app);
-    match settings.keyboard_implementation {
-        KeyboardImplementation::Tauri => tauri_impl::register_shortcut(app, binding),
-        KeyboardImplementation::HandyKeys => handy_keys::register_shortcut(app, binding),
+    let result = match settings.keyboard_implementation {
+        KeyboardImplementation::Tauri => tauri_impl::register_shortcut(app, binding.clone()),
+        KeyboardImplementation::HandyKeys => handy_keys::register_shortcut(app, binding.clone()),
+    };
+    if binding.id != "cancel" {
+        note_registration(
+            &binding,
+            result.as_ref().map(|_| ()).map_err(|e| e.as_str()),
+        );
     }
+    result
 }
 
 /// Unregister a shortcut using the appropriate implementation
 pub fn unregister_shortcut(app: &AppHandle, binding: ShortcutBinding) -> Result<(), String> {
+    note_unregistered(&binding);
     let settings = get_settings(app);
     match settings.keyboard_implementation {
         KeyboardImplementation::Tauri => tauri_impl::unregister_shortcut(app, binding),
@@ -306,6 +390,10 @@ pub fn resume_all_shortcuts(app: &AppHandle) {
             continue;
         }
         if id == "transcribe_with_post_process" && !settings.post_process_enabled {
+            continue;
+        }
+        // change_binding already registered its new combination.
+        if already_owned(binding) {
             continue;
         }
         if let Err(e) = register_shortcut(app, binding.clone()) {
@@ -1481,6 +1569,72 @@ pub async fn get_available_accelerators() -> crate::managers::transcription::Ava
 mod tests {
     use handy_keys::Hotkey;
     use tauri_plugin_global_shortcut::Shortcut;
+
+    #[test]
+    fn onboarding_row21_init_reports_which_shortcut_failed() {
+        let binding = crate::settings::get_default_settings().bindings["transcribe"].clone();
+        let _serial = FAILURES.lock().unwrap_or_else(|p| p.into_inner());
+        super::clear_init_failures();
+        super::note_registration(&binding, Err("already registered"));
+        assert_eq!(
+            super::init_failures(),
+            vec![super::ShortcutFailure {
+                id: "transcribe".into(),
+                binding: binding.current_binding.clone(),
+                error: "already registered".into(),
+            }]
+        );
+        // A new initialization starts clean.
+        super::clear_init_failures();
+        assert!(super::init_failures().is_empty());
+    }
+
+    static FAILURES: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn review3_resume_after_a_rebind_never_reports_the_working_shortcut() {
+        let _serial = FAILURES.lock().unwrap_or_else(|p| p.into_inner());
+        let main = crate::settings::get_default_settings().bindings["transcribe"].clone();
+        super::clear_init_failures();
+        // Init registered it; recording a new one suspends everything.
+        super::note_registration(&main, Ok(()));
+        super::note_unregistered(&main);
+        assert!(!super::already_owned(&main));
+        // change_binding registers the new combination.
+        let mut rebound = main.clone();
+        rebound.current_binding = "ctrl+option+d".into();
+        super::note_registration(&rebound, Ok(()));
+        // Resume skips it instead of failing it as a duplicate...
+        assert!(super::already_owned(&rebound));
+        // ...while a binding Voce does not hold is registered again.
+        assert!(!super::already_owned(&main));
+        // Refocusing Try it reads no failure.
+        assert!(super::init_failures().is_empty());
+        super::clear_init_failures();
+    }
+
+    #[test]
+    fn review2_n5_a_successful_rebind_clears_its_warning_and_the_next_one_shows() {
+        let _serial = FAILURES.lock().unwrap_or_else(|p| p.into_inner());
+        let defaults = crate::settings::get_default_settings().bindings;
+        let main = defaults["transcribe"].clone();
+        let raw = defaults[crate::settings::RAW_BINDING_ID].clone();
+        super::clear_init_failures();
+        super::note_registration(&main, Err("taken"));
+        super::note_registration(&raw, Err("taken"));
+        let mut rebound = main.clone();
+        rebound.current_binding = "ctrl+option+d".into();
+        super::note_registration(&rebound, Ok(()));
+        let left = super::init_failures();
+        assert_eq!(left.len(), 1, "the rebound shortcut is no longer reported");
+        assert_eq!(left[0].id, raw.id, "the next failed one is");
+        // Rebinding to another taken combination reports the new keys.
+        super::note_registration(&rebound, Err("taken"));
+        assert!(super::init_failures()
+            .iter()
+            .any(|f| f.id == "transcribe" && f.binding == "ctrl+option+d"));
+        super::clear_init_failures();
+    }
 
     #[test]
     fn compound_shortcut_keys_parse_on_both_backends() {

@@ -16,6 +16,9 @@ typedef struct {
 // Check if Apple Intelligence is available on the device
 int is_apple_intelligence_available(void);
 
+// 0 unsupported, 1 ready, 2 turned off, 3 model not ready, 4 other
+int apple_intelligence_status(void);
+
 // Process text using Apple's on-device LLM with separate system prompt and user content
 AppleLLMResponse* process_text_with_system_prompt_apple(const char* system_prompt, const char* user_content, int max_tokens);
 

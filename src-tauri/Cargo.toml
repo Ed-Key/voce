@@ -1,6 +1,6 @@
 [package]
 name = "voce"
-version = "1.0.0"
+version = "1.1.0"
 description = "Voce"
 authors = ["CJ Pais", "Edward Kiboma"]
 edition = "2021"
@@ -79,7 +79,7 @@ sha2 = "0.10"
 # transcribe-rs is now ONNX-only (Parakeet, Moonshine, SenseVoice, GigaAM,
 # Canary, Cohere). Per-platform backend features are added in the target tables.
 transcribe-rs = { version = "0.3.8", features = ["onnx"] }
-transcribe-cpp = { version = "0.2.4", default-features = false }
+transcribe-cpp = { version = "0.5.0", default-features = false }
 handy-keys = "0.3.4"
 ferrous-opencc = "0.2.3"
 clap = { version = "4", features = ["derive"] }
@@ -142,31 +142,50 @@ winreg = "0.55"
 # signtool verify entirely. CI pins -DGGML_NATIVE=OFF (see build.yml) so the
 # static build targets a portable ARM baseline, not the build runner's CPU.
 [target.'cfg(all(windows, target_arch = "x86_64"))'.dependencies]
-transcribe-cpp = { version = "0.2.4", default-features = false, features = [
+transcribe-cpp = { version = "0.5.0", default-features = false, features = [
   "dynamic-backends",
   "vulkan",
 ] }
 
 [target.'cfg(all(windows, target_arch = "aarch64"))'.dependencies]
-transcribe-cpp = { version = "0.2.4", default-features = false }
+transcribe-cpp = { version = "0.5.0", default-features = false }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 security-framework = "3.7"
 libc = "0.2"
 tauri-nspanel = { git = "https://github.com/ahkohd/tauri-nspanel", branch = "v2.1" }
-transcribe-cpp = { version = "0.2.4", default-features = false, features = ["metal"] }
+transcribe-cpp = { version = "0.5.0", default-features = false, features = ["metal"] }
 # Used by the receipt-sequenced ("reliable") paste path for lazy NSPasteboard
 # promises. Versions track what Tauri already pulls in.
 objc2 = "0.6"
 objc2-foundation = "0.3"
 objc2-app-kit = "0.3"
 objc2-service-management = "0.3.2"
+# Name boosting (src/boost/ax.rs): the app-activation observer's block, and
+# the Accessibility walk that reads names near the caret with the permission
+# Voce already has for pasting.
+block2 = "0.6"
+objc2-application-services = { version = "0.3.2", default-features = false, features = [
+  "std",
+  "libc",
+  "HIServices",
+  "AXUIElement",
+  "AXValue",
+  "AXError",
+] }
+objc2-core-foundation = { version = "0.3.2", default-features = false, features = [
+  "std",
+  "CFBase",
+  "CFString",
+  "CFNumber",
+  "CFArray",
+] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk-layer-shell = { version = "0.8", features = ["v0_6"] }
 gtk = "0.18"
 libc = "0.2"
-transcribe-cpp = { version = "0.2.4", default-features = false, features = [
+transcribe-cpp = { version = "0.5.0", default-features = false, features = [
   "dynamic-backends",
   "vulkan",
 ] }
@@ -188,6 +207,10 @@ transcribe-cpp = { version = "0.2.4", default-features = false, features = [
 # that, but Nix's importCargoLock vendors both to the same `tao-macros-0.1.3`
 # dir and fails with a symlink collision. Unifying the source removes the dup.
 [patch.crates-io]
+# Name boosting inside the streaming Parakeet decoder: the published crate
+# plus patches/transcribe-cpp-sys-0.5.0-stream-boost.patch, materialized by
+# scripts/vendor-transcribe-cpp.sh.
+transcribe-cpp-sys = { path = "vendor/transcribe-cpp-sys-0.5.0" }
 tao = { git = "https://github.com/cjpais/tao", rev = "c3bee28c1d446d95f08c95c3b6f8d4bde052b876" }
 tao-macros = { git = "https://github.com/cjpais/tao", rev = "c3bee28c1d446d95f08c95c3b6f8d4bde052b876" }
 

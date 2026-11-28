@@ -236,13 +236,21 @@ fn abort_in_flight(inner: &mut Inner) {
 
 /// Continuation needs a server that resumes a trailing assistant message and
 /// the plain `${output}` prompt path (not structured output).
-fn is_continuable(settings: &AppSettings) -> bool {
+pub(crate) fn is_continuable(settings: &AppSettings) -> bool {
     let Some(provider) = settings.active_post_process_provider() else {
         return false;
     };
-    provider.id == "custom"
+    (provider.id == "custom" || provider.id == crate::settings::VOCE_LOCAL_PROVIDER_ID)
         && !provider.supports_structured_output
         && post_process_target(settings).is_some_and(|t| t.prompt.contains("${output}"))
+}
+
+/// The committed words a later chunk cannot extend. The stream commits word
+/// pieces, so its last word may be half a word ("wor" before "king"); only a
+/// word followed by whitespace is known to be finished.
+pub fn finished_words(committed: &str) -> &str {
+    let text = committed.trim_end();
+    text[..text.rfind(char::is_whitespace).unwrap_or(0)].trim_end()
 }
 
 /// `prefix` is `text` cut at a word boundary. The final transcript often adds
@@ -306,6 +314,19 @@ pub fn join(locked: &str, reply: &str) -> Option<String> {
     if reply.trim_start().starts_with(&head) {
         return None;
     }
+    // A reply that restarts with the locked text's last words would write
+    // them twice ("...to Alice" + "to Alice. Then..."): fall back too.
+    let norm = |w: &str| -> String {
+        w.chars()
+            .filter(|c| c.is_alphanumeric())
+            .flat_map(char::to_lowercase)
+            .collect()
+    };
+    let lw: Vec<String> = locked.split_whitespace().map(norm).collect();
+    let rw: Vec<String> = reply.split_whitespace().map(norm).collect();
+    if (2..=4).any(|n| n <= lw.len() && n <= rw.len() && lw[lw.len() - n..] == rw[..n]) {
+        return None;
+    }
     let needs_space = reply
         .chars()
         .next()
@@ -340,6 +361,35 @@ mod tests {
     }
 
     #[test]
+    fn boost_row12_a_reply_restarting_with_the_locked_words_falls_back() {
+        assert_eq!(
+            join("Send the report to Alice", "to Alice. Then call Bob."),
+            None
+        );
+        // One repeated word can be real speech ("that that"); it is kept.
+        assert!(join("I know that", "that is fine.").is_some());
+    }
+
+    #[test]
+    fn boost_row11_a_name_respelled_across_an_offer_is_not_a_prefix() {
+        // The offer ended in "open"; with "pencil" the final text respelled
+        // both words as OpenPencil, so the cache is not a prefix: whole
+        // cleanup, never stale locked text.
+        let ec = Arc::new(EarlyCleanup::default());
+        {
+            let mut i = ec.inner.lock().unwrap();
+            i.settings = Some(Arc::new(settings_with_early()));
+            i.cache = Some(Cached {
+                input: "we ship today. switch to open".into(),
+                output: "We ship today. Switch to open.".into(),
+                finished_at: Instant::now(),
+            });
+        }
+        let (r, _) = ec.resolve("we ship today. switch to OpenPencil now");
+        assert!(matches!(r, Release::Whole("not_prefix")));
+    }
+
+    #[test]
     fn divergence_reports_position_and_kinds_without_words() {
         let d = divergence("it works", "it worked fine");
         assert_eq!(
@@ -348,6 +398,20 @@ mod tests {
         );
         assert!(divergence("hi", "hi").contains("cached has end, final has end"));
         assert!(!divergence("secret words", "secret wordz").contains("words"));
+    }
+
+    #[test]
+    fn offers_stop_before_the_last_committed_word() {
+        // A cached offer that ended inside a word the next chunk extended
+        // ("wor" then "working") was never a prefix of the final text.
+        assert_eq!(finished_words("so it is wor"), "so it is");
+        assert_eq!(finished_words("so it is "), "so it");
+        assert_eq!(finished_words("one"), "");
+        assert_eq!(finished_words(""), "");
+        assert!(is_word_prefix(
+            finished_words("we are wor"),
+            "we are working on it"
+        ));
     }
 
     #[test]
@@ -362,6 +426,147 @@ mod tests {
         assert!(is_word_prefix("so, it works", "so, it works, and then"));
         assert!(is_word_prefix("did it work", "did it work? Yes"));
         assert!(!is_word_prefix("it work", "it works. The next part"));
+    }
+
+    /// Release-to-text latency with Voce cleanup, early cleanup on vs off,
+    /// through the real path: offers while "speaking" at 3 words a second,
+    /// then close, resolve and `process_transcription_output`, as release
+    /// does. Needs `VOCE_LLAMA_SERVER` and `VOCE_S1_MODEL`.
+    #[tokio::test(flavor = "multi_thread")]
+    #[ignore = "requires VOCE_LLAMA_SERVER and VOCE_S1_MODEL"]
+    async fn real_voce_cleanup_release_latency_with_and_without_early_cleanup() {
+        use crate::actions::process_with_settings as process_transcription_output;
+        let binary = std::path::PathBuf::from(std::env::var_os("VOCE_LLAMA_SERVER").unwrap());
+        let model = std::path::PathBuf::from(std::env::var_os("VOCE_S1_MODEL").unwrap());
+        let sidecar = crate::local_llm::install_for_test(crate::local_llm::Sidecar::new(
+            Some(binary),
+            model,
+            None,
+        ));
+        drop(sidecar.ensure(None, false).await.expect("server starts"));
+        let mut settings = crate::settings::get_default_settings();
+        crate::cleanup_setup::apply_choice(
+            &mut settings,
+            &crate::cleanup_setup::CleanupChoice::VoceLocal,
+        );
+        settings.early_cleanup = true;
+        let base = "um so I think we should uh move the standup to thursday at ten because \
+            the the design review is on wednesday now. and uh marcus said he can't make the \
+            morning slot so like we need to find something after lunch. also we should \
+            probably tell priya about the budget numbers before friday since she asked twice \
+            and I don't want her to hear it from the finance team first. ";
+        let mut rows = Vec::new();
+        let mut problems = Vec::new();
+        for repeats in [1usize, 2, 4] {
+            let text = base.repeat(repeats);
+            let words: Vec<&str> = text.split_whitespace().collect();
+            let final_text = words.join(" ");
+            // Off: today's whole-text cleanup at release.
+            let t = Instant::now();
+            let off =
+                process_transcription_output(&settings, &final_text, true, Release::Whole("off"))
+                    .await;
+            let off_ms = t.elapsed().as_millis();
+            // On: offers during speech.
+            let ec = Arc::new(EarlyCleanup::default());
+            ec.begin(settings.clone(), true);
+            let token = ec.session();
+            for i in 1..=words.len() {
+                if ec.due(token, i) {
+                    ec.offer(token, words[..i].join(" "), i);
+                }
+                tokio::time::sleep(Duration::from_millis(333)).await;
+            }
+            ec.close();
+            let t = Instant::now();
+            let (release, early) = ec.resolve(&final_text);
+            let used = early.unwrap_or_else(|| Arc::new(settings.clone()));
+            let on = process_transcription_output(&used, &final_text, true, release).await;
+            let on_ms = t.elapsed().as_millis();
+            rows.push(format!(
+                "words={} off_ms={} on_ms={} path={} same_text={}",
+                words.len(),
+                off_ms,
+                on_ms,
+                on.cleanup_path,
+                on.final_text == off.final_text
+            ));
+            if on.final_text != off.final_text {
+                rows.push(format!(
+                    "  off: {}\n  on:  {}",
+                    off.final_text, on.final_text
+                ));
+            }
+            // Complete: against the whole-text cleanup, a duplicated or
+            // dropped sentence (8+ words) is far over 3% of the words; the
+            // continuation may differ only in a word or punctuation.
+            let (n, change) =
+                word_change(&off.final_text, &on.final_text).expect("the cleanup has words");
+            if change > 0.03 {
+                problems.push(format!("{} words: {:.1}% word change", n, change * 100.0));
+            }
+            match on.cleanup_path {
+                "cont" | "exact" => {}
+                // A fallback runs the same whole cleanup: the same text.
+                _ if on.final_text == off.final_text => {}
+                path => problems.push(format!("{n} words: fallback {path} changed the text")),
+            }
+        }
+        for row in &rows {
+            println!("{row}");
+        }
+        sidecar.stop();
+        assert!(problems.is_empty(), "{problems:?}");
+    }
+
+    /// Word edit distance from `a` to `b` over `a`'s words (lowercase,
+    /// letters and digits only), with `a`'s word count.
+    fn word_change(a: &str, b: &str) -> Option<(usize, f64)> {
+        let words = |t: &str| -> Vec<String> {
+            t.split_whitespace()
+                .map(|w| {
+                    w.chars()
+                        .filter(|c| c.is_alphanumeric())
+                        .flat_map(char::to_lowercase)
+                        .collect::<String>()
+                })
+                .filter(|w| !w.is_empty())
+                .collect()
+        };
+        let (a, b) = (words(a), words(b));
+        if a.is_empty() {
+            return None;
+        }
+        let mut prev: Vec<usize> = (0..=b.len()).collect();
+        for (i, x) in a.iter().enumerate() {
+            let mut cur = vec![i + 1; b.len() + 1];
+            for (j, y) in b.iter().enumerate() {
+                cur[j + 1] = (prev[j] + usize::from(x != y))
+                    .min(prev[j + 1] + 1)
+                    .min(cur[j] + 1);
+            }
+            prev = cur;
+        }
+        Some((a.len(), prev[b.len()] as f64 / a.len() as f64))
+    }
+
+    #[test]
+    fn c3_clean_while_you_talk_arms_for_voce_cleanup_and_custom_only() {
+        let mut settings = crate::settings::get_default_settings();
+        crate::cleanup_setup::apply_choice(
+            &mut settings,
+            &crate::cleanup_setup::CleanupChoice::VoceLocal,
+        );
+        assert!(
+            is_continuable(&settings),
+            "Voce cleanup continues on llama-server"
+        );
+        settings.post_process_provider_id = "openai".into();
+        settings
+            .post_process_models
+            .insert("openai".into(), "gpt-4o-mini".into());
+        settings.post_process_selected_prompt_id = Some(crate::settings::DEFAULT_PROMPT_ID.into());
+        assert!(!is_continuable(&settings), "cloud providers never get it");
     }
 
     fn settings_with_early() -> AppSettings {

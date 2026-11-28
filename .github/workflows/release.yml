@@ -155,6 +155,18 @@ jobs:
             echo "APPLE_API_KEY=$APPLE_API_KEY"
           } >> "$GITHUB_ENV"
 
+      # The patched transcribe-cpp-sys (name boosting inside the stream).
+      - name: Vendor transcribe-cpp-sys
+        run: scripts/vendor-transcribe-cpp.sh
+
+      # The cleanup sidecar: pinned llama.cpp release, checksum checked, only
+      # llama-server and the dylibs it loads, signed here with the release
+      # identity (Tauri does not sign macOS "files"; see the script).
+      - name: Fetch llama-server
+        run: |
+          [ "$MODE" = notarized ] && export VOCE_SIGN_TIMESTAMP=1
+          scripts/fetch-llama-server.sh
+
       # Tauri signs with APPLE_SIGNING_IDENTITY and notarizes when APPLE_API_*
       # is set; in a rehearsal neither is, so it builds unsigned.
       # Updater packages are switched on here only, so local builds need no updater key.
@@ -162,7 +174,15 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: bun run tauri build --target aarch64-apple-darwin --bundles app,dmg --config '{"bundle":{"createUpdaterArtifacts":true}}'
+        run: bun run tauri build --target aarch64-apple-darwin --bundles app,dmg --config '{"bundle":{"createUpdaterArtifacts":true}}' --config src-tauri/tauri.sidecar.conf.json
+
+      # Runs in every mode: a sidecar dyld refuses (missing dylib, library
+      # validation) fails the build here instead of on users' Macs.
+      - name: Check the cleanup sidecar starts inside the app
+        run: |
+          set -euo pipefail
+          APP=$(find "$BUNDLE/macos" -maxdepth 1 -name "*.app" | head -1)
+          "$APP/Contents/MacOS/llama-server" --version
 
       - name: Check the signature
         if: env.RELEASE == 'true'
@@ -170,6 +190,17 @@ jobs:
           set -euo pipefail
           APP=$(find "$BUNDLE/macos" -maxdepth 1 -name "*.app" | head -1)
           codesign --verify --deep --strict "$APP"
+          # The sidecar and every dylib it loads carry the release signature.
+          for f in "$APP"/Contents/MacOS/llama-server "$APP"/Contents/MacOS/lib*.dylib; do
+            codesign --verify --strict "$f"
+            codesign -d -r- "$f" 2>&1 | tee "$RUNNER_TEMP/sidecar-requirement.txt"
+            if [ "$MODE" = notarized ]; then
+              TEAM=$(codesign -dv "$APP" 2>&1 | awk -F= '/^TeamIdentifier/{print $2}')
+              codesign -dv "$f" 2>&1 | grep -qx "TeamIdentifier=$TEAM"
+            else
+              grep -qiE "certificate (root|leaf) = H\"$VOCE_CERT_SHA1\"" "$RUNNER_TEMP/sidecar-requirement.txt"
+            fi
+          done
           if [ "$MODE" = notarized ]; then
             spctl --assess --type execute -vv "$APP"
             xcrun stapler validate "$APP"

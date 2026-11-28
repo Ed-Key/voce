@@ -112,6 +112,8 @@ struct FinalizedStreamText {
     output_language: OutputLanguageEvidence,
     /// The streaming model's supported languages, for text-based detection.
     supported_languages: Vec<String>,
+    /// The stream's boost list, whose spellings the final text restores.
+    vocabulary: Vec<String>,
 }
 
 /// Routes real-time audio frames to the active streaming worker. Shared between
@@ -278,6 +280,10 @@ pub struct TranscriptionManager {
     /// `is_model_loaded()` consults this so the model still reports "loaded"
     /// while the worker holds it.
     active_engine_lease: Arc<AtomicU64>,
+    /// The loaded primary boosts a vocabulary inside its stream: a streaming
+    /// transcribe-cpp model with `Feature::Vocabulary` that is not Whisper
+    /// (Whisper keeps its initial prompt). Boost-design v3.6 option A0.
+    primary_boosts: Arc<AtomicBool>,
 }
 
 impl TranscriptionManager {
@@ -298,6 +304,7 @@ impl TranscriptionManager {
             next_stream_worker_id: Arc::new(AtomicU64::new(1)),
             active_stream_worker: Arc::new(AtomicU64::new(0)),
             active_engine_lease: Arc::new(AtomicU64::new(0)),
+            primary_boosts: Arc::new(AtomicBool::new(false)),
         };
 
         // Start the idle watcher
@@ -424,6 +431,7 @@ impl TranscriptionManager {
             let mut current_model = self.current_model_id.lock().unwrap();
             *current_model = None;
         }
+        self.set_primary_boosts(false);
 
         // Emit unloaded event
         let _ = self.app_handle.emit(
@@ -553,6 +561,7 @@ impl TranscriptionManager {
             let mut current_model = self.current_model_id.lock().unwrap();
             *current_model = None;
         }
+        self.set_primary_boosts(false);
 
         // Create appropriate engine based on model type
 
@@ -589,7 +598,11 @@ impl TranscriptionManager {
                     .as_ref()
                     .map(transcribe_device_label)
                     .unwrap_or_else(|| "automatic".to_string());
-                let model_options = ModelOptions { backend, device };
+                let model_options = ModelOptions {
+                    backend,
+                    device,
+                    ..ModelOptions::default()
+                };
                 let model = Model::load_with(&model_path, &model_options).map_err(|e| {
                     let error_msg = format!("Failed to load whisper model {}: {}", model_id, e);
                     emit_loading_failed(&error_msg);
@@ -610,7 +623,13 @@ impl TranscriptionManager {
                 // loaded model's real ones (GGUF metadata) so badges/gating
                 // reflect runtime truth, not the pre-download probe. The
                 // load-completed event below triggers the frontend refresh.
-                let caps = session.model().capabilities();
+                // transcribe-cpp 0.5 returns an error for a model that does
+                // not serve ASR; that is a failed load here.
+                let caps = session.model().capabilities().map_err(|e| {
+                    let error_msg = format!("Model {} has no ASR capabilities: {}", model_id, e);
+                    emit_loading_failed(&error_msg);
+                    anyhow::anyhow!(error_msg)
+                })?;
                 self.model_manager.set_runtime_capabilities(
                     model_id,
                     caps.supports_streaming,
@@ -634,6 +653,12 @@ impl TranscriptionManager {
                     caps.supports_streaming,
                     caps.supports_translate,
                     caps.supports_language_detect
+                );
+                let model = session.model();
+                self.set_primary_boosts(
+                    caps.supports_streaming
+                        && model.supports(Feature::Vocabulary)
+                        && model.arch() != "whisper",
                 );
                 LoadedEngine::TranscribeCpp(session)
             }
@@ -791,6 +816,17 @@ impl TranscriptionManager {
         }
     }
 
+    fn set_primary_boosts(&self, on: bool) {
+        self.primary_boosts.store(on, Ordering::Release);
+        // The screen-name cache only walks windows while it can be used.
+        crate::boost::screen::set_wanted(on);
+    }
+
+    /// Whether the loaded model boosts a vocabulary inside its stream.
+    pub fn primary_boosts(&self) -> bool {
+        self.primary_boosts.load(Ordering::Acquire)
+    }
+
     /// Whether a live streaming run is currently in flight.
     pub fn is_streaming(&self) -> bool {
         self.stream_active.load(Ordering::Acquire)
@@ -812,7 +848,9 @@ impl TranscriptionManager {
     /// model can't stream, the worker idles until finalize/cancel and reports
     /// `None` so the caller falls back to batch transcription. Frames sent
     /// before the stream begins queue on the channel and are not lost.
-    pub fn start_stream(&self) {
+    /// `vocabulary`: the dictation's frozen list, boosted inside the
+    /// stream's decoder and restored in its text (option A0); empty for none.
+    pub fn start_stream(&self, vocabulary: Vec<String>) {
         if self.router.is_open() || self.active_stream_worker.load(Ordering::Acquire) != 0 {
             warn!("start_stream called while a stream worker is already active");
             return;
@@ -836,7 +874,7 @@ impl TranscriptionManager {
             .map(|ec| ec.session());
 
         let manager = self.clone();
-        thread::spawn(move || manager.run_stream_worker(rx, worker_id, early_token));
+        thread::spawn(move || manager.run_stream_worker(rx, worker_id, early_token, vocabulary));
     }
 
     fn run_stream_worker(
@@ -844,6 +882,7 @@ impl TranscriptionManager {
         rx: mpsc::Receiver<StreamCmd>,
         worker_id: u64,
         early_token: Option<u64>,
+        vocabulary: Vec<String>,
     ) {
         let _worker = StreamWorkerGuard {
             worker_id,
@@ -903,22 +942,23 @@ impl TranscriptionManager {
         let (supports_streaming, supports_translate, languages) = match &engine {
             LoadedEngine::TranscribeCpp(session) => {
                 let model = session.model();
-                let caps = model.capabilities();
+                // Loading already required ASR capabilities (see load); a
+                // failure here reads as a model without streaming.
+                let caps = model.capabilities().ok();
+                let streams = caps.as_ref().is_some_and(|c| c.supports_streaming);
+                let translates = caps.as_ref().is_some_and(|c| c.supports_translate);
+                let languages = caps.map(|c| c.languages).unwrap_or_default();
                 info!(
                     "Live preview: model '{}' arch='{}' variant='{}' supports_streaming={} \
                      supports_translate={} languages={:?}",
                     model_id,
                     model.arch(),
                     model.variant(),
-                    caps.supports_streaming,
-                    caps.supports_translate,
-                    caps.languages,
+                    streams,
+                    translates,
+                    languages,
                 );
-                (
-                    caps.supports_streaming,
-                    caps.supports_translate,
-                    caps.languages,
-                )
+                (streams, translates, languages)
             }
             _ => {
                 info!(
@@ -958,6 +998,7 @@ impl TranscriptionManager {
             task: run_plan.task,
             language: run_plan.language,
             target_language: run_plan.target_language,
+            vocabulary: vocabulary.clone(),
             ..Default::default()
         };
 
@@ -981,6 +1022,7 @@ impl TranscriptionManager {
 
             // StreamOptions::default() uses CommitPolicy::Auto and lets the
             // family pick its own streaming strategy (no family-specific ext).
+            let is_parakeet = session.model().arch() == "parakeet";
             let mut stream = match session.stream(&run_options, &StreamOptions::default()) {
                 Ok(s) => s,
                 Err(e) => {
@@ -997,6 +1039,7 @@ impl TranscriptionManager {
             );
 
             let mut perf = StreamPerf::new();
+            let mut fed_samples: usize = 0;
             // Early cleanup (if armed for this dictation) gets the filtered
             // committed text, the same filter finalize applies to the full text.
             let early = early_token.and_then(|token| {
@@ -1009,6 +1052,7 @@ impl TranscriptionManager {
                     StreamCmd::Feed(pcm) => {
                         self.touch_activity();
                         perf.record_feed(pcm.len());
+                        fed_samples += pcm.len();
                         let feed_start = Instant::now();
                         match stream.feed(&pcm) {
                             Ok(update) => {
@@ -1026,12 +1070,19 @@ impl TranscriptionManager {
                                     {
                                         let raw_words = text.committed.split_whitespace().count();
                                         if ec.due(*token, raw_words) {
-                                            let filtered = post_process_transcription_text(
-                                                text.committed.clone(),
-                                                &settings,
-                                                false,
-                                                &output_language,
-                                                &languages,
+                                            let filtered = crate::boost::list::restore_spelling(
+                                                &post_process_transcription_text(
+                                                    crate::early_cleanup::finished_words(
+                                                        &text.committed,
+                                                    )
+                                                    .to_string(),
+                                                    &settings,
+                                                    false,
+                                                    &output_language,
+                                                    &languages,
+                                                ),
+                                                &vocabulary,
+                                                &settings.custom_words,
                                             );
                                             ec.offer(*token, filtered, raw_words);
                                         }
@@ -1054,6 +1105,13 @@ impl TranscriptionManager {
                     }
                     StreamCmd::Finalize(reply) => {
                         let finalize_start = Instant::now();
+                        // The same trailing silence as batch runs get, so the
+                        // stream's end sees the frame count batch would.
+                        if is_parakeet {
+                            if let Err(e) = stream.feed(&stream_finalize_tail(fed_samples)) {
+                                warn!("stream tail padding failed: {}", e);
+                            }
+                        }
                         let result = match stream.finalize() {
                             // After finalize the committed prefix holds the full
                             // text; display() = committed + tentative is the safe read.
@@ -1081,6 +1139,7 @@ impl TranscriptionManager {
                                     text: stream.text().full,
                                     output_language,
                                     supported_languages: languages.clone(),
+                                    vocabulary: vocabulary.clone(),
                                 })
                             }
                             Err(e) => {
@@ -1176,12 +1235,16 @@ impl TranscriptionManager {
         let settings = get_settings(&self.app_handle);
         // Streaming models do not receive a decode prompt, so custom words
         // always go through the shared fuzzy post-correction path.
-        let filtered = post_process_transcription_text(
-            finalized.text,
-            &settings,
-            false,
-            &finalized.output_language,
-            &finalized.supported_languages,
+        let filtered = crate::boost::list::restore_spelling(
+            &post_process_transcription_text(
+                finalized.text,
+                &settings,
+                false,
+                &finalized.output_language,
+                &finalized.supported_languages,
+            ),
+            &finalized.vocabulary,
+            &settings.custom_words,
         );
 
         self.maybe_unload_immediately("streaming transcription");
@@ -1221,6 +1284,18 @@ impl TranscriptionManager {
     }
 
     pub fn transcribe(&self, audio: Vec<f32>) -> Result<String> {
+        self.transcribe_with_vocabulary(audio, &[])
+    }
+
+    /// `transcribe` with custom terms for transcribe.cpp's phrase boosting
+    /// (`RunOptions::vocabulary`; offline decoders of models that report
+    /// `Feature::Vocabulary`). The batch fallback of a boosted dictation
+    /// passes its frozen list; no terms is exactly `transcribe`.
+    pub fn transcribe_with_vocabulary(
+        &self,
+        audio: Vec<f32>,
+        vocabulary: &[String],
+    ) -> Result<String> {
         #[cfg(debug_assertions)]
         if std::env::var("HANDY_FORCE_TRANSCRIPTION_FAILURE").is_ok() {
             return Err(anyhow::anyhow!(
@@ -1331,11 +1406,13 @@ impl TranscriptionManager {
             let mut model_detected_language: Option<String> = None;
             if let LoadedEngine::TranscribeCpp(session) = &engine {
                 let model = session.model();
-                let caps = model.capabilities();
                 model_takes_initial_prompt = model.supports(Feature::InitialPrompt);
                 model_is_whisper = model.arch() == "whisper";
-                model_supports_translate = caps.supports_translate;
-                model_languages = caps.languages;
+                // Loading already required ASR capabilities (see load).
+                if let Ok(caps) = model.capabilities() {
+                    model_supports_translate = caps.supports_translate;
+                    model_languages = caps.languages;
+                }
                 debug!(
                     "transcribe-cpp model '{}' on '{}': initial_prompt={}, translate={}, languages={:?}",
                     settings.selected_model,
@@ -1377,6 +1454,7 @@ impl TranscriptionManager {
                             language: run_plan.language,
                             target_language: run_plan.target_language,
                             family,
+                            vocabulary: vocabulary.to_vec(),
                             ..Default::default()
                         };
 
@@ -1387,8 +1465,17 @@ impl TranscriptionManager {
                             run_options.family.is_some()
                         );
 
+                        // Parakeet: trailing silence so the mel frame count is
+                        // never a multiple of 8 (see parakeet_tail_padding).
+                        let padded;
+                        let audio_in: &[f32] = if session.model().arch() == "parakeet" {
+                            padded = with_parakeet_tail(&audio);
+                            &padded
+                        } else {
+                            &audio
+                        };
                         session
-                            .run(&audio, &run_options)
+                            .run(audio_in, &run_options)
                             .map(|t| {
                                 // Whisper's audio-based LID (auto mode only;
                                 // `None` when a language hint was passed).
@@ -1540,12 +1627,16 @@ impl TranscriptionManager {
         // family). We don't pass a prompt to non-whisper models (it requires the
         // whisper-kind run extension), so they still get fuzzy correction here,
         // same as the ONNX engines.
-        let filtered_result = post_process_transcription_text(
-            result,
-            &settings,
-            model_is_whisper,
-            &output_language,
-            &model_languages,
+        let filtered_result = crate::boost::list::restore_spelling(
+            &post_process_transcription_text(
+                result,
+                &settings,
+                model_is_whisper,
+                &output_language,
+                &model_languages,
+            ),
+            vocabulary,
+            &settings.custom_words,
         );
 
         let et = std::time::Instant::now();
@@ -1804,6 +1895,52 @@ fn transcribe_cpp_run_plan(
         language,
         target_language,
     }
+}
+
+/// Mel frames transcribe.cpp 0.5.0 gives Parakeet for `n_samples` (hop
+/// 160): the offline (batch) path drops NeMo's padding frame, so
+/// floor(n / 160); the streaming path keeps the frontend's extra frame, so
+/// floor(n / 160) + 1.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ParakeetPath {
+    Batch,
+    Stream,
+}
+
+pub(crate) fn parakeet_mel_frames(n_samples: usize, path: ParakeetPath) -> usize {
+    n_samples / 160
+        + match path {
+            ParakeetPath::Batch => 0,
+            ParakeetPath::Stream => 1,
+        }
+}
+
+/// Trailing silence (in 16 kHz samples) to append to Parakeet input on
+/// `path`: 100 ms, plus 10 ms more if that path's mel frame count would still
+/// be a multiple of 8. transcribe.cpp 0.5.0 drops the last word on such
+/// lengths (a 0.96 s clip of 96 frames lost "week"); 10 ms of silence was
+/// enough to restore it.
+pub(crate) fn parakeet_tail_padding(n_samples: usize, path: ParakeetPath) -> usize {
+    let mut pad = 1600;
+    if parakeet_mel_frames(n_samples + pad, path) % 8 == 0 {
+        pad += 160;
+    }
+    pad
+}
+
+fn with_parakeet_tail(audio: &[f32]) -> Vec<f32> {
+    let mut padded = Vec::with_capacity(audio.len() + 1760);
+    padded.extend_from_slice(audio);
+    padded.resize(
+        audio.len() + parakeet_tail_padding(audio.len(), ParakeetPath::Batch),
+        0.0,
+    );
+    padded
+}
+
+/// What the stream worker feeds before finalize, given what it was fed.
+fn stream_finalize_tail(fed_samples: usize) -> Vec<f32> {
+    vec![0.0; parakeet_tail_padding(fed_samples, ParakeetPath::Stream)]
 }
 
 fn post_process_transcription_text(
@@ -2276,8 +2413,51 @@ pub fn get_available_accelerators() -> AvailableAccelerators {
 mod tests {
     use super::*;
 
+    #[test]
+    fn parakeet_padding_never_leaves_a_frame_count_that_is_a_multiple_of_8() {
+        for n in 0..20_000usize {
+            for path in [ParakeetPath::Batch, ParakeetPath::Stream] {
+                let pad = parakeet_tail_padding(n, path);
+                assert!(pad == 1600 || pad == 1760, "{n}: {pad}");
+                assert_ne!(parakeet_mel_frames(n + pad, path) % 8, 0, "{n} {path:?}");
+            }
+        }
+        // The clip that lost its last word: 96 batch frames.
+        assert_eq!(parakeet_tail_padding(15_360, ParakeetPath::Batch), 1600);
+        let audio = vec![0.5f32; 15_360];
+        let padded = with_parakeet_tail(&audio);
+        assert_eq!(&padded[..15_360], &audio[..]);
+        assert!(padded[15_360..].iter().all(|&x| x == 0.0));
+    }
+
     fn languages(codes: &[&str]) -> Vec<String> {
         codes.iter().map(|code| (*code).to_string()).collect()
+    }
+
+    #[test]
+    fn the_stream_tail_follows_the_streaming_frame_geometry() {
+        // 14,880 + 1,600 samples: 103 batch frames but 104 streaming frames
+        // (the frontend's extra frame), so the stream needs the extra 10 ms.
+        assert_eq!(parakeet_mel_frames(14_880 + 1600, ParakeetPath::Batch), 103);
+        assert_eq!(
+            parakeet_mel_frames(14_880 + 1600, ParakeetPath::Stream),
+            104
+        );
+        let tail = stream_finalize_tail(14_880);
+        assert_eq!(tail.len(), 1760);
+        assert_ne!(
+            parakeet_mel_frames(14_880 + tail.len(), ParakeetPath::Stream) % 8,
+            0
+        );
+        // What the worker feeds: everything fed, then this tail.
+        for fed in [0usize, 480, 14_880, 15_360, 47_520, 160_000] {
+            let total = fed + stream_finalize_tail(fed).len();
+            assert_ne!(
+                parakeet_mel_frames(total, ParakeetPath::Stream) % 8,
+                0,
+                "{fed}"
+            );
+        }
     }
 
     #[test]

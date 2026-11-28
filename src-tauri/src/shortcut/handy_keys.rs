@@ -444,12 +444,17 @@ pub fn init_shortcuts(app: &AppHandle) -> Result<(), String> {
             .cloned()
             .unwrap_or(default_binding);
 
-        if let Err(e) = state.register(&binding) {
+        let result = state.register(&binding);
+        if let Err(e) = &result {
             error!(
                 "Failed to register handy-keys shortcut {} during init: {}",
                 id, e
             );
         }
+        super::note_registration(
+            &binding,
+            result.as_ref().map(|_| ()).map_err(|e| e.as_str()),
+        );
     }
 
     app.manage(state);

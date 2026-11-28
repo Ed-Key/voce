@@ -974,6 +974,9 @@ async openAppDataDir() : Promise<Result<null, string>> {
 async checkAppleIntelligenceAvailable() : Promise<boolean> {
     return await TAURI_INVOKE("check_apple_intelligence_available");
 },
+async appleIntelligenceState() : Promise<AppleIntelligenceState> {
+    return await TAURI_INVOKE("apple_intelligence_state");
+},
 /**
  * Try to initialize Enigo (keyboard/mouse simulation).
  * On macOS, this will return an error if accessibility permissions are not granted.
@@ -1287,6 +1290,172 @@ async isLaptop() : Promise<Result<boolean, string>> {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+async getOnboardingState() : Promise<OnboardingState> {
+    return await TAURI_INVOKE("get_onboarding_state");
+},
+/**
+ * Mark `step` complete; returns the step to show next.
+ */
+async completeOnboardingStep(step: OnboardingStep) : Promise<OnboardingStep> {
+    return await TAURI_INVOKE("complete_onboarding_step", { step });
+},
+async setOnboardingPendingModel(modelId: string | null) : Promise<void> {
+    await TAURI_INVOKE("set_onboarding_pending_model", { modelId });
+},
+/**
+ * Try it (rows 20, 21, 23): the dictation shortcuts and the paste keyboard,
+ * which the main window otherwise sets up only once onboarding is done
+ * (both idempotent), and practice mode: until `end_onboarding_try`, a
+ * dictation's text arrives as `onboarding-practice-text` and nothing is
+ * pasted into any app.
+ */
+async beginOnboardingTry() : Promise<Result<TryStart, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("begin_onboarding_try") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Leaving or cancelling Try it (row 20b): practice mode ends and any
+ * recording stops; a dictation already transcribing or cleaning sees the
+ * cancellation and delivers nothing.
+ */
+async endOnboardingTry() : Promise<void> {
+    await TAURI_INVOKE("end_onboarding_try");
+},
+/**
+ * Names (row 24): off stops window reads for names and drops the cache.
+ */
+async changeScreenNamesSetting(enabled: boolean) : Promise<void> {
+    await TAURI_INVOKE("change_screen_names_setting", { enabled });
+},
+async voceCleanupStatus() : Promise<VoceCleanupStatus> {
+    return await TAURI_INVOKE("voce_cleanup_status");
+},
+/**
+ * Download s1-mini into Voce's models folder, resuming a stopped download
+ * (progress as `model-download-progress` with `model_id`
+ * `voce-cleanup-s1-mini`). Ok(false) when cancelled; the partial file stays.
+ */
+async downloadVoceCleanupModel() : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("download_voce_cleanup_model") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async cancelVoceCleanupDownload() : Promise<void> {
+    await TAURI_INVOKE("cancel_voce_cleanup_download");
+},
+/**
+ * LM Studio (port 1234) and Ollama (port 11434), each given 1 s.
+ */
+async detectLocalCleanupServers() : Promise<LocalServer[]> {
+    return await TAURI_INVOKE("detect_local_cleanup_servers");
+},
+/**
+ * Test `choice` on the sample sentence. Saves nothing.
+ */
+async testCleanup(requestId: number, choice: CleanupChoice) : Promise<CleanupTestResult> {
+    return await TAURI_INVOKE("test_cleanup", { requestId, choice });
+},
+/**
+ * Save the choice of test `request_id`. Refused unless it is the newest
+ * test and it passed, so a late or failed result enables nothing.
+ */
+async saveCleanupChoice(requestId: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("save_cleanup_choice", { requestId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Off or Set up later: cleanup off; any running test is forgotten.
+ */
+async turnCleanupOff() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("turn_cleanup_off") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * The user switched options or left the step: a running test can no
+ * longer be saved.
+ */
+async forgetCleanupTests() : Promise<void> {
+    await TAURI_INVOKE("forget_cleanup_tests");
+},
+/**
+ * A provider's models with a key typed but not saved (onboarding and the
+ * Cleanup page). The key is used for this one request only: never stored,
+ * never logged. `base_url` applies to the custom provider only. Errors are
+ * `key_rejected` (401/403), `unreachable` or `timeout` (5 s).
+ */
+async listCleanupModels(providerId: string, apiKey: string, baseUrl: string | null) : Promise<Result<string[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_cleanup_models", { providerId, apiKey, baseUrl }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * What the "Clean while you talk" switch shows.
+ */
+async getEarlyCleanupState() : Promise<EarlyCleanupState> {
+    return await TAURI_INVOKE("get_early_cleanup_state");
+},
+/**
+ * Voce cleanup is the current choice on screen: start its server in the
+ * background, so the first test or dictation does not wait. The first
+ * start on a Mac can take many seconds (Metal compiles its kernels once).
+ */
+async warmVoceCleanup() : Promise<void> {
+    await TAURI_INVOKE("warm_voce_cleanup");
+},
+/**
+ * The user picked another option (or left): stop a warm-up. A server
+ * already serving the saved Voce cleanup is left alone.
+ */
+async cancelVoceCleanupWarm() : Promise<void> {
+    await TAURI_INVOKE("cancel_voce_cleanup_warm");
+},
+/**
+ * "Clean while you talk" (early cleanup) on the Cleanup page.
+ */
+async changeEarlyCleanupSetting(enabled: boolean) : Promise<void> {
+    await TAURI_INVOKE("change_early_cleanup_setting", { enabled });
+},
+/**
+ * s1-mini's control line (Voce cleanup, or any provider whose model is
+ * s1-mini) on the Cleanup page.
+ */
+async changeS1ControlSetting(styling: S1Styling, structure: S1Structure, context: S1Context) : Promise<void> {
+    await TAURI_INVOKE("change_s1_control_setting", { styling, structure, context });
+},
+async getStorageReport() : Promise<Result<StorageReport, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_storage_report") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async removeStorageItem(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("remove_storage_item", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 }
 }
 
@@ -1344,15 +1513,40 @@ hold_threshold_ms?: number; audio_feedback?: boolean; audio_feedback_volume?: nu
  * upgrading from before this key existed are blanked by the migration so they
  * see the current release's notes — see `apply_settings_migrations`.
  */
-whats_new_last_seen_version?: string; selected_model?: string; onboarding_completed?: boolean; always_on_microphone?: boolean; selected_microphone?: string | null; 
+whats_new_last_seen_version?: string; selected_model?: string; 
+/**
+ * True once onboarding is done (`onboarding_step == Done`); kept for
+ * stores written before `onboarding_step` existed.
+ */
+onboarding_completed?: boolean; 
+/**
+ * The step to resume at, written when the previous step completes.
+ * Stores without it are migrated in `apply_settings_migrations`.
+ */
+onboarding_step?: OnboardingStep; 
+/**
+ * The speech model the Speech step started downloading.
+ */
+onboarding_pending_model?: string | null; 
+/**
+ * s1-mini's control line (styling, structure, context).
+ */
+s1_styling?: S1Styling; s1_structure?: S1Structure; s1_context?: S1Context; 
+/**
+ * Read names in the focused window for name boosting. Off means no
+ * window reads for names and an empty cache.
+ */
+screen_names?: boolean; always_on_microphone?: boolean; selected_microphone?: string | null; 
 /**
  * Which input channel to use on the selected microphone device.
  * None means "average all channels" (original behavior).
  */
 selected_channel?: number | null; clamshell_microphone?: string | null; selected_output_device?: string | null; translate_to_english?: boolean; selected_language?: string; overlay_position?: OverlayPosition; debug_mode?: boolean; log_level?: LogLevel; custom_words?: string[]; model_unload_timeout?: ModelUnloadTimeout; word_correction_threshold?: number; history_limit?: number; recording_retention_period?: RecordingRetentionPeriod; paste_method?: PasteMethod; clipboard_handling?: ClipboardHandling; auto_submit?: boolean; auto_submit_key?: AutoSubmitKey; post_process_enabled?: boolean; 
 /**
- * Run the cleanup LLM on the recognized text while the key is held, so
- * release only finishes the last sentence. Local custom provider only.
+ * "Clean while you talk": run the cleanup LLM on the recognized text
+ * while the key is held, so release only finishes the last sentence.
+ * Local servers only (the custom provider, or Voce cleanup). On for fresh
+ * installs; stores that have the key keep it.
  */
 early_cleanup?: boolean; 
 /**
@@ -1386,6 +1580,28 @@ vad_backend?: VadBackend;
  * `overlay_position` (position `none` → style `None`).
  */
 overlay_style?: OverlayStyle }
+/**
+ * Whether this Mac can run Apple Intelligence at all, and if so whether it
+ * is ready. Settings > Cleanup offers it on every eligible Mac and shows
+ * what is missing until it is ready.
+ */
+export type AppleIntelligenceState =
+/**
+ * Not an eligible Mac, macOS before 26, or a build without it.
+ */
+"unsupported" | "ready" |
+/**
+ * Turned off in System Settings.
+ */
+"not_enabled" |
+/**
+ * Its model is still downloading.
+ */
+"model_not_ready" |
+/**
+ * Unavailable for a reason this build does not know.
+ */
+"unavailable"
 export type AudioDevice = { index: string; name: string; is_default: boolean }
 export type AudioStatus = { managed: boolean; expires_at: number | null; expired: boolean }
 export type AutoSubmitKey = "enter" | "ctrl_enter" | "cmd_enter"
@@ -1404,11 +1620,55 @@ export type ChineseScript =
  */
 "as_transcribed" | "simplified" | "traditional"
 export type Choice = "start" | "dismiss" | "open"
+export type CleanupChoice = 
+/**
+ * s1-mini on Voce's own runtime.
+ */
+{ kind: "voce_local" } | 
+/**
+ * LM Studio, Ollama or another OpenAI-compatible server on this Mac.
+ */
+{ kind: "local_server"; base_url: string; model: string } | 
+/**
+ * A cloud provider from the provider list, with the user's key.
+ */
+{ kind: "cloud"; provider_id: string; api_key: string; model: string } | { kind: "apple_intelligence" }
+export type CleanupTestResult = { 
+/**
+ * The id the frontend sent; it ignores results for older ids (row 16b).
+ */
+request_id: number; outcome: TestOutcome; 
+/**
+ * What Voce would paste (passed tests only).
+ */
+output: string | null; 
+/**
+ * The cleanup request alone: what each dictation waits for.
+ */
+ms: number; 
+/**
+ * Starting Voce cleanup's server first, when it was not running
+ * (0 otherwise). The first start on a Mac can take many seconds.
+ */
+start_ms: number }
 export type ClipboardHandling = "dont_modify" | "copy_to_clipboard"
 export type Connection = { id: string; phase: string; requested_at_ms: number; last_attempt_ms: number; attempts: number; claimed_at_ms: number | null; ready_at_ms: number | null }
 export type CustomSounds = { start: boolean; stop: boolean }
 export type Destination = { session_id: string | null; assistie_run: string | null }
 export type DetectionSnapshot = { available: boolean; apps: CallApp[]; possible_end: boolean; dictating: boolean }
+export type EarlyCleanupState = { 
+/**
+ * The stored switch (on unless the user turned it off).
+ */
+enabled: boolean; 
+/**
+ * The chosen cleanup can do it (the custom provider or Voce cleanup).
+ */
+available: boolean; 
+/**
+ * It runs: switched on, available, and cleanup on.
+ */
+effective: boolean }
 export type EngineType = 
 /**
  * Any GGML/GGUF model loaded through transcribe-cpp (Whisper, Parakeet,
@@ -1441,6 +1701,8 @@ key_down: number; key_up: number; flags_changed: number; mouse: number; duration
 export type KeyboardImplementation = "tauri" | "handy_keys"
 export type LLMPrompt = { id: string; name: string; prompt: string }
 export type LocalReplay = { run_id?: string; complete: boolean; entries: number; feed_segments: number; feed_sequence: number; version: number; local_only: boolean; sharing: boolean; live_style: boolean; following: boolean; processing_ms: number; first_update_ms: number | null; max_lag_ms: number | null }
+export type LocalServer = { kind: LocalServerKind; base_url: string; models: string[] }
+export type LocalServerKind = "lm_studio" | "ollama"
 export type LogLevel = "trace" | "debug" | "info" | "warn" | "error"
 /**
  * The user's mark on a Terra reply (or a missed moment) and whether its private case was saved.
@@ -1479,6 +1741,16 @@ export type ModelUnloadTimeout = "never" | "immediately" | "min_2" | "min_5" | "
 export type NotchEvent = { n: number; action: string }
 export type NotchLayout = "compact" | "peek" | "expanded"
 export type Offer = { id: number; app: CallApp; fictional: boolean }
+export type OnboardingState = { step: OnboardingStep; 
+/**
+ * The speech model the Speech step started downloading, if any.
+ */
+pending_model: string | null }
+/**
+ * The onboarding step to resume at. Ordered: a step is never written back
+ * to an earlier one (see `onboarding::complete_step`).
+ */
+export type OnboardingStep = "welcome" | "permissions" | "speech" | "cleanup" | "try" | "names" | "storage" | "done"
 export type OrtAcceleratorSetting = "auto" | "cpu" | "cuda" | "directml" | "rocm"
 export type OverlayPosition = "top" | "bottom"
 /**
@@ -1495,8 +1767,14 @@ export type PluginStatus = { phase: string; running: boolean; fictional_only: bo
 export type Point = { text: string; sources: number[] }
 export type PostProcessProvider = { id: string; label: string; base_url: string; allow_base_url_edit?: boolean; models_endpoint?: string | null; supports_structured_output?: boolean }
 export type Question = { id: number; text: string; version: number; status: string }
-export type RecordingRetentionPeriod = "never" | "preserve_limit" | "days_3" | "weeks_2" | "months_3"
+export type RecordingRetentionPeriod = "never" | "preserve_limit" | "days3" | "weeks2" | "months3"
 export type Reply = { event_id: string; question_id: number | null; kind: string; version: number; snapshot_at_ms?: number | null; source_status?: string | null; received_at_ms?: number | null; text: string; quotes: Source[] }
+export type S1Context = "general" | "email"
+export type S1Structure = "prose" | "lists"
+/**
+ * s1-mini's control line values, from its model card.
+ */
+export type S1Styling = "casual" | "semi-casual" | "semi-formal" | "formal"
 export type SecretMap = Partial<{ [key in string]: string }>
 export type Sections = { overview: Point[]; decisions: Point[]; action_items: Point[]; open_questions: Point[] }
 export type SecureInputStatus = { 
@@ -1550,6 +1828,19 @@ export type ShortcutActivation =
  */
 "hold_or_toggle"
 export type ShortcutBinding = { id: string; name: string; description: string; default_binding: string; current_binding: string }
+/**
+ * A shortcut that is not registered because registering it failed
+ * (onboarding row 21).
+ */
+export type ShortcutFailure = { 
+/**
+ * Binding id, e.g. `transcribe`.
+ */
+id: string; 
+/**
+ * The key combination, e.g. `option+space`.
+ */
+binding: string; error: string }
 export type Snapshot = { run_id: string; status: string; transport?: string | null; connection?: Connection | null; sharing: boolean; proactive: boolean; deadline_ms: number | null; startup_deadline_ms: number | null; version: number; feed_sequence?: number; local_only?: boolean; call_id?: string | null; feed_error?: string | null; archive?: boolean; history_offset?: number; history_more?: boolean; question_limit?: number | null; questions_asked?: number | null; context_brief: Brief | null; questions: Question[]; replies: Reply[]; marks?: Mark[]; reply_count?: number | null; 
 /**
  * Your own newest line is still being spoken; pointer peeks wait for it.
@@ -1569,6 +1860,25 @@ source?: string | null;
  * Time from the start of the call.
  */
 start_ms?: number | null }
+export type StorageItem = { 
+/**
+ * Pass to `remove_storage_item`. Speech models are `speech:<model id>`.
+ */
+id: string; kind: StorageKind; 
+/**
+ * The model's name for models; empty otherwise.
+ */
+name: string; 
+/**
+ * Bytes on disk (HF cache files included; within a few percent).
+ */
+bytes: number; 
+/**
+ * Calls or dictations, for call data and history.
+ */
+count: number | null; in_use: boolean; removable: boolean }
+export type StorageKind = "speech_model" | "meeting_model" | "cleanup_model" | "runtime" | "recordings" | "call_data" | "history"
+export type StorageReport = { items: StorageItem[]; total_bytes: number; disk_free_bytes: number; disk_total_bytes: number }
 /**
  * Phase of the streaming overlay card, emitted to drive its UI state.
  */
@@ -1602,6 +1912,7 @@ export type StreamTextEvent = { committed: string; tentative: string }
  */
 export type StreamWorkKind = "transcribing" | "polishing"
 export type Summary = { job_id: string; recording_key: string; notes_key: string; transcript_version: string; sections: Sections; edited_text: string | null }
+export type TestOutcome = "passed" | "download_needed" | "start_failed" | "unreachable" | "timeout" | "empty" | "malformed" | "hijacked" | "key_rejected"
 /**
  * UI appearance mode. `System` follows the OS `prefers-color-scheme`; `Light`
  * and `Dark` force one of the two palettes Handy already ships.
@@ -1612,9 +1923,24 @@ export type TranscribeAcceleratorSetting = "auto" | "cpu" | "gpu"
 export type Transcript = { recording_key: string; version?: string; complete: boolean; entries: Entry[]; warnings: string[] }
 export type TranscriptBatch = { sequence: number; base_version: number; segments: TranscriptSegment[]; remove_ids: string[] }
 export type TranscriptSegment = { id: string; source: string; start_ms: number; end_ms: number; text: string; finalized: boolean }
+export type TryStart = { 
+/**
+ * Shortcuts that could not be registered (row 21), e.g. taken by
+ * another dictation app. Empty when all work.
+ */
+failed_shortcuts: ShortcutFailure[] }
 export type TypingTool = "auto" | "wtype" | "kwtype" | "dotool" | "ydotool" | "xdotool"
 export type VadBackend = "silero" | "earshot"
 export type View = { audio: AudioStatus; status: string; error: string | null; done: number; total: number; transcript: Transcript | null; summary: Summary | null; outdated: boolean }
+export type VoceCleanupStatus = { downloaded: boolean; downloading: boolean; 
+/**
+ * Bytes of a stopped download kept for resume.
+ */
+partial_bytes: number; total_bytes: number; 
+/**
+ * A llama-server runtime was found.
+ */
+runtime_found: boolean }
 export type WindowsMicrophonePermissionStatus = { supported: boolean; overall_access: PermissionAccess; device_access: PermissionAccess; app_access: PermissionAccess; desktop_app_access: PermissionAccess }
 
 /** tauri-specta globals **/

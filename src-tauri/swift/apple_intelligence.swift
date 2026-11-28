@@ -37,16 +37,32 @@ private func truncatedText(_ text: String, limit: Int) -> String {
 
 @_cdecl("is_apple_intelligence_available")
 public func isAppleIntelligenceAvailable() -> Int32 {
+    return appleIntelligenceStatus() == 1 ? 1 : 0
+}
+
+/// 0 this Mac cannot run it, 1 ready, 2 turned off in System Settings,
+/// 3 its model is not ready yet (downloading), 4 unavailable for a reason
+/// this build does not know.
+@_cdecl("apple_intelligence_status")
+public func appleIntelligenceStatus() -> Int32 {
     guard #available(macOS 26.0, *) else {
         return 0
     }
 
-    let model = SystemLanguageModel.default
-    switch model.availability {
+    switch SystemLanguageModel.default.availability {
     case .available:
         return 1
-    case .unavailable:
-        return 0
+    case .unavailable(let reason):
+        switch reason {
+        case .deviceNotEligible:
+            return 0
+        case .appleIntelligenceNotEnabled:
+            return 2
+        case .modelNotReady:
+            return 3
+        @unknown default:
+            return 4
+        }
     }
 }
 

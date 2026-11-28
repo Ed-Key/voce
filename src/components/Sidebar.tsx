@@ -6,6 +6,7 @@ import {
   Box,
   Cog,
   FlaskConical,
+  HardDrive,
   History,
   Info,
   Sparkles,
@@ -24,8 +25,9 @@ import {
   HistorySettings,
   DebugSettings,
   AboutSettings,
-  PostProcessingSettings,
   ModelsSettings,
+  StorageSettings,
+  CleanupSettings,
 } from "./settings";
 
 export type SidebarSection = keyof typeof SECTIONS_CONFIG;
@@ -85,11 +87,18 @@ export const SECTIONS_CONFIG = {
     enabled: () => true,
     block: 1,
   },
-  postprocessing: {
-    labelKey: "sidebar.postProcessing",
+  cleanup: {
+    labelKey: "sidebar.cleanup",
     icon: Sparkles,
-    component: PostProcessingSettings,
-    enabled: (settings) => settings?.post_process_enabled ?? false,
+    component: CleanupSettings,
+    enabled: () => true,
+    block: 1,
+  },
+  storage: {
+    labelKey: "sidebar.storage",
+    icon: HardDrive,
+    component: StorageSettings,
+    enabled: () => true,
     block: 1,
   },
   advanced: {

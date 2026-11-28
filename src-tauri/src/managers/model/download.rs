@@ -34,7 +34,7 @@ fn content_range_start(value: &str) -> Option<u64> {
 /// How a [`ModelManager::download_http_resumable`] call ended, cancellation
 /// being an outcome (partial kept, no error surfaced) rather than a failure.
 #[derive(Debug)]
-pub(super) enum HttpDownloadOutcome {
+pub(crate) enum HttpDownloadOutcome {
     Completed,
     Cancelled,
 }
@@ -130,7 +130,30 @@ impl ModelManager {
         expected_sha256: Option<&str>,
         cancel_token: &CancellationToken,
     ) -> Result<HttpDownloadOutcome> {
-        let app_handle = self.app_handle.clone();
+        Self::download_url_resumable(
+            &self.app_handle,
+            model_id,
+            url,
+            partial_path,
+            expected_size,
+            expected_sha256,
+            cancel_token,
+        )
+        .await
+    }
+
+    /// The same downloader for files the model registry does not track (the
+    /// cleanup model), with the same `model-download-progress` events.
+    pub(crate) async fn download_url_resumable(
+        app_handle: &tauri::AppHandle,
+        model_id: &str,
+        url: &str,
+        partial_path: &Path,
+        expected_size: Option<u64>,
+        expected_sha256: Option<&str>,
+        cancel_token: &CancellationToken,
+    ) -> Result<HttpDownloadOutcome> {
+        let app_handle = app_handle.clone();
         let id = model_id.to_string();
         Self::download_http_resumable_with_events(
             model_id,

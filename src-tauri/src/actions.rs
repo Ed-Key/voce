@@ -9,6 +9,7 @@ use crate::managers::transcription::StreamWorkKind;
 use crate::managers::transcription::TranscriptionManager;
 use crate::settings::{
     get_settings, AppSettings, OverlayStyle, PostProcessProvider, APPLE_INTELLIGENCE_PROVIDER_ID,
+    RAW_BINDING_ID, VOCE_LOCAL_PROVIDER_ID,
 };
 use crate::shortcut;
 use crate::tray::{set_tray_state, TrayIconState};
@@ -58,7 +59,22 @@ pub trait ShortcutAction: Send + Sync {
 
 // Transcribe Action
 struct TranscribeAction {
-    post_process: bool,
+    /// The second shortcut: paste without cleanup.
+    raw: bool,
+}
+
+impl TranscribeAction {
+    fn for_binding(binding_id: &str) -> Self {
+        Self {
+            raw: binding_id == RAW_BINDING_ID,
+        }
+    }
+
+    /// Whether this dictation cleans: the main key does whenever cleanup is
+    /// on; the second shortcut never does (docs/onboarding-lifecycle.md C1).
+    fn cleans(&self, settings: &AppSettings) -> bool {
+        !self.raw && settings.post_process_enabled
+    }
 }
 
 /// Field name for structured output JSON schema
@@ -153,6 +169,21 @@ pub(crate) fn post_process_target(settings: &AppSettings) -> Option<PostProcessT
         return None;
     }
 
+    // s1-mini takes its control line from the settings, not an edited prompt.
+    if crate::settings::is_s1(&provider.id, &model) {
+        let api_key = settings
+            .post_process_api_keys
+            .get(&provider.id)
+            .cloned()
+            .unwrap_or_default();
+        return Some(PostProcessTarget {
+            prompt: crate::settings::s1_prompt(settings),
+            provider,
+            api_key,
+            model,
+        });
+    }
+
     let selected_prompt_id = match &settings.post_process_selected_prompt_id {
         Some(id) => id.clone(),
         None => {
@@ -195,6 +226,54 @@ pub(crate) fn post_process_target(settings: &AppSettings) -> Option<PostProcessT
     })
 }
 
+/// Why a cleanup request gave no text (the onboarding test's failure kinds;
+/// dictation pastes the raw text for any of them).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CleanupFailure {
+    Empty,
+    Malformed,
+    KeyRejected,
+    Unreachable,
+}
+
+fn failure_of(error: &str) -> CleanupFailure {
+    match crate::llm_client::status_of(error) {
+        Some(401 | 403) => CleanupFailure::KeyRejected,
+        // A reply that is not a chat completion.
+        None if error.starts_with("Failed to parse") => CleanupFailure::Malformed,
+        _ => CleanupFailure::Unreachable,
+    }
+}
+
+/// The target ready to call: for Voce cleanup, its server started (on
+/// demand) and its URL filled in. The lease keeps the server from being
+/// stopped as idle until the request is done.
+pub(crate) async fn ready_target(
+    settings: &AppSettings,
+) -> Option<(PostProcessTarget, Option<crate::local_llm::Lease<'static>>)> {
+    let mut target = post_process_target(settings)?;
+    if target.provider.id != VOCE_LOCAL_PROVIDER_ID {
+        return Some((target, None));
+    }
+    let sidecar = crate::local_llm::sidecar()?;
+    match sidecar
+        .ensure(
+            crate::local_llm::idle_after(settings.model_unload_timeout),
+            false,
+        )
+        .await
+    {
+        Ok(lease) => {
+            target.provider.base_url = lease.base_url.clone();
+            Some((target, Some(lease)))
+        }
+        Err(e) => {
+            warn!("Voce cleanup is unavailable: {:?}", e);
+            None
+        }
+    }
+}
+
 pub(crate) async fn post_process_transcription(
     settings: &AppSettings,
     transcription: &str,
@@ -203,13 +282,24 @@ pub(crate) async fn post_process_transcription(
         debug!("Post-processing skipped because the transcription is empty");
         return None;
     }
+    let (target, _lease) = ready_target(settings).await?;
+    run_cleanup(&target, transcription, false).await.ok()
+}
 
+/// One cleanup request. `strict` (the onboarding test) fails where dictation
+/// is lenient: unparsed structured output and an empty reply are failures
+/// there, while dictation keeps today's behavior and pastes what came back.
+pub(crate) async fn run_cleanup(
+    target: &PostProcessTarget,
+    transcription: &str,
+    strict: bool,
+) -> Result<String, CleanupFailure> {
     let PostProcessTarget {
         provider,
         api_key,
         model,
         prompt,
-    } = post_process_target(settings)?;
+    } = target;
 
     debug!(
         "Starting LLM post-processing with provider '{}' (model: {})",
@@ -221,10 +311,11 @@ pub(crate) async fn post_process_transcription(
     // field the endpoint understands and retries without it if rejected.
     let disable_reasoning = matches!(provider.id.as_str(), "custom" | "openrouter");
 
-    if provider.supports_structured_output {
+    let s1 = crate::settings::is_s1(&provider.id, model);
+    if provider.supports_structured_output && !s1 {
         debug!("Using structured outputs for provider '{}'", provider.id);
 
-        let system_prompt = build_system_prompt(&prompt);
+        let system_prompt = build_system_prompt(prompt);
         let user_content = transcription.to_string();
 
         // Handle Apple Intelligence separately since it uses native Swift APIs
@@ -235,7 +326,7 @@ pub(crate) async fn post_process_transcription(
                     debug!(
                         "Apple Intelligence selected but not currently available on this device"
                     );
-                    return None;
+                    return Err(CleanupFailure::Unreachable);
                 }
 
                 let token_limit = model.trim().parse::<i32>().unwrap_or(0);
@@ -247,19 +338,19 @@ pub(crate) async fn post_process_transcription(
                     Ok(result) => {
                         if result.trim().is_empty() {
                             debug!("Apple Intelligence returned an empty response");
-                            None
+                            Err(CleanupFailure::Empty)
                         } else {
                             let result = strip_invisible_chars(&result);
                             debug!(
                                 "Apple Intelligence post-processing succeeded. Output length: {} chars",
                                 result.len()
                             );
-                            Some(result)
+                            Ok(result)
                         }
                     }
                     Err(err) => {
                         error!("Apple Intelligence post-processing failed: {}", err);
-                        None
+                        Err(CleanupFailure::Unreachable)
                     }
                 };
             }
@@ -267,7 +358,7 @@ pub(crate) async fn post_process_transcription(
             #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
             {
                 debug!("Apple Intelligence provider selected on unsupported platform");
-                return None;
+                return Err(CleanupFailure::Unreachable);
             }
         }
 
@@ -285,9 +376,9 @@ pub(crate) async fn post_process_transcription(
         });
 
         match crate::llm_client::send_chat_completion_with_schema(
-            &provider,
+            provider,
             api_key.clone(),
-            &model,
+            model,
             user_content,
             Some(system_prompt),
             Some(json_schema),
@@ -309,10 +400,13 @@ pub(crate) async fn post_process_transcription(
                                 provider.id,
                                 result.len()
                             );
-                            return Some(result);
+                            return Ok(result);
                         } else {
                             error!("Structured output response missing 'transcription' field");
-                            return Some(strip_invisible_chars(content));
+                            if strict {
+                                return Err(CleanupFailure::Malformed);
+                            }
+                            return Ok(strip_invisible_chars(content));
                         }
                     }
                     Err(e) => {
@@ -320,13 +414,23 @@ pub(crate) async fn post_process_transcription(
                             "Failed to parse structured output JSON: {}. Returning raw content.",
                             e
                         );
-                        return Some(strip_invisible_chars(content));
+                        if strict {
+                            return Err(CleanupFailure::Malformed);
+                        }
+                        return Ok(strip_invisible_chars(content));
                     }
                 }
             }
             Ok(None) => {
                 error!("LLM API response has no content");
-                return None;
+                return Err(CleanupFailure::Empty);
+            }
+            Err(e) if failure_of(&e) == CleanupFailure::KeyRejected => {
+                error!(
+                    "Structured output failed for provider '{}': key rejected",
+                    provider.id
+                );
+                return Err(CleanupFailure::KeyRejected);
             }
             Err(e) => {
                 warn!(
@@ -341,12 +445,16 @@ pub(crate) async fn post_process_transcription(
     // Legacy mode: Replace ${output} variable in the prompt with the actual text
     let processed_prompt = prompt.replace("${output}", transcription);
     debug!("Processed prompt length: {} chars", processed_prompt.len());
+    // s1-mini wants its own system prompt beside the control line.
+    let system_prompt = s1.then(|| crate::settings::VOCE_S1_SYSTEM_PROMPT.to_string());
 
-    match crate::llm_client::send_chat_completion(
-        &provider,
-        api_key,
-        &model,
+    match crate::llm_client::send_chat_completion_with_schema(
+        provider,
+        api_key.clone(),
+        model,
         processed_prompt,
+        system_prompt,
+        None,
         disable_reasoning,
     )
     .await
@@ -358,11 +466,14 @@ pub(crate) async fn post_process_transcription(
                 provider.id,
                 content.len()
             );
-            Some(content)
+            if strict && content.trim().is_empty() {
+                return Err(CleanupFailure::Empty);
+            }
+            Ok(content)
         }
         Ok(None) => {
             error!("LLM API response has no content");
-            None
+            Err(CleanupFailure::Empty)
         }
         Err(e) => {
             error!(
@@ -370,7 +481,7 @@ pub(crate) async fn post_process_transcription(
                 provider.id,
                 e
             );
-            None
+            Err(failure_of(&e))
         }
     }
 }
@@ -399,6 +510,16 @@ pub(crate) fn warm_post_process_model(settings: &AppSettings) {
     let Some(target) = post_process_target(settings) else {
         return;
     };
+    // Voce cleanup: starting its server is the warm-up (it loads the model).
+    if target.provider.id == VOCE_LOCAL_PROVIDER_ID {
+        let idle_after = crate::local_llm::idle_after(settings.model_unload_timeout);
+        tauri::async_runtime::spawn(async move {
+            if let Some(sidecar) = crate::local_llm::sidecar() {
+                let _ = sidecar.ensure(idle_after, false).await;
+            }
+        });
+        return;
+    }
     // Only a model server on this Mac: a custom provider can also point at a
     // paid cloud API, which must never get unrequested calls.
     if target.provider.id != "custom" || !crate::llm_client::is_loopback(&target.provider.base_url)
@@ -427,6 +548,18 @@ pub(crate) fn warm_post_process_model(settings: &AppSettings) {
     });
 }
 
+/// The part of a continuation reply after the prefilled words. llama-server
+/// (behind Voce cleanup) sends the prefill back with its continuation, so a
+/// Voce reply that does not start with the locked words exactly rewrote them:
+/// None, and release falls back to a whole cleanup. LM Studio sends only the
+/// rest, so a custom reply is taken as it is.
+fn continuation_rest<'a>(provider_id: &str, locked: &str, reply: &'a str) -> Option<&'a str> {
+    if provider_id == VOCE_LOCAL_PROVIDER_ID {
+        return reply.trim_start().strip_prefix(locked);
+    }
+    Some(reply)
+}
+
 /// Early cleanup's release step: today's legacy request for `transcription`,
 /// with `locked` (the start of an earlier cleaned output) as a partial
 /// assistant answer, so the model writes only the rest. Returns locked + rest.
@@ -435,24 +568,33 @@ async fn post_process_continuing(
     transcription: &str,
     locked: &str,
 ) -> Option<String> {
-    let target = post_process_target(settings)?;
+    let (target, _lease) = ready_target(settings).await?;
     let prompt = target.prompt.replace("${output}", transcription);
+    let system_prompt = crate::settings::is_s1(&target.provider.id, &target.model)
+        .then(|| crate::settings::VOCE_S1_SYSTEM_PROMPT.to_string());
     let request = crate::llm_client::send_chat_completion_continuing(
         &target.provider,
-        target.api_key,
+        target.api_key.clone(),
         &target.model,
         prompt,
+        system_prompt,
         locked.to_string(),
         true,
     );
     match tokio::time::timeout(std::time::Duration::from_secs(20), request).await {
         Ok(Ok(Some(reply))) => {
             let reply = strip_invisible_chars(strip_think_block(&reply));
+            let Some(reply) = continuation_rest(&target.provider.id, locked, &reply) else {
+                warn!(
+                    "Early cleanup continuation rewrote the locked words; using whole-text cleanup"
+                );
+                return None;
+            };
             if reply.trim().is_empty() {
                 warn!("Early cleanup continuation returned no text");
                 return None;
             }
-            let joined = crate::early_cleanup::join(locked, &reply);
+            let joined = crate::early_cleanup::join(locked, reply);
             if joined.is_none() {
                 warn!("Early cleanup continuation started over; using whole-text cleanup");
             }
@@ -491,9 +633,19 @@ pub(crate) async fn process_transcription_output(
     post_process: bool,
     early: (crate::early_cleanup::Release, Option<Arc<AppSettings>>),
 ) -> ProcessedTranscription {
-    use crate::early_cleanup::Release;
     let (release, early_settings) = early;
     let settings = early_settings.map_or_else(|| get_settings(app), |s| (*s).clone());
+    process_with_settings(&settings, transcription, post_process, release).await
+}
+
+/// `process_transcription_output` with the settings already chosen.
+pub(crate) async fn process_with_settings(
+    settings: &AppSettings,
+    transcription: &str,
+    post_process: bool,
+    release: crate::early_cleanup::Release,
+) -> ProcessedTranscription {
+    use crate::early_cleanup::Release;
     let mut final_text = transcription.to_string();
     let mut post_processed_text: Option<String> = None;
     let mut post_process_prompt: Option<String> = None;
@@ -547,6 +699,60 @@ pub(crate) async fn process_transcription_output(
     }
 }
 
+/// The current dictation's name boosting (docs/boost-lifecycle.md): the
+/// list frozen at key-down and why it is or is not boosted.
+struct Boost {
+    /// "on", or the `boost=off` reason: `empty` (no list), `model` (the
+    /// loaded model cannot boost), `stream` (the model does not stream).
+    reason: &'static str,
+    list: Vec<String>,
+}
+
+impl Boost {
+    fn off(reason: &'static str) -> Self {
+        Boost {
+            reason,
+            list: Vec::new(),
+        }
+    }
+}
+
+static BOOST: std::sync::Mutex<Option<Boost>> = std::sync::Mutex::new(None);
+
+/// What key-down decided for the current dictation, so release agrees with
+/// it even if the settings or onboarding change while the key is held.
+#[derive(Clone, Copy)]
+struct KeyDown {
+    /// Cleanup runs (`TranscribeAction::cleans` on the start-time settings).
+    cleans: bool,
+    /// Started during onboarding's Try it: the text goes to the practice box
+    /// (`onboarding-practice-text`), never pasted into an app (row 23).
+    practice: bool,
+}
+
+static KEY_DOWN: std::sync::Mutex<Option<KeyDown>> = std::sync::Mutex::new(None);
+
+/// Key-down: freeze the list and decide whether the stream boosts it. A
+/// model still loading counts as boosting; the library ignores a list on
+/// a model without vocabulary support.
+fn boost_for(tm: &TranscriptionManager, settings: &AppSettings) -> Boost {
+    boost_decision(
+        crate::boost::list::frozen_list(settings),
+        tm.is_model_loaded(),
+        tm.primary_boosts(),
+    )
+}
+
+fn boost_decision(list: Vec<String>, loaded: bool, boosts: bool) -> Boost {
+    if list.is_empty() {
+        Boost::off("empty")
+    } else if loaded && !boosts {
+        Boost::off("model")
+    } else {
+        Boost { reason: "on", list }
+    }
+}
+
 impl ShortcutAction for TranscribeAction {
     fn start(&self, app: &AppHandle, binding_id: &str, _shortcut_str: &str) {
         let start_time = Instant::now();
@@ -589,6 +795,10 @@ impl ShortcutAction for TranscribeAction {
         let plan_started = Instant::now();
         let settings = get_settings(app);
         let is_always_on = settings.always_on_microphone;
+        *KEY_DOWN.lock().unwrap_or_else(|p| p.into_inner()) = Some(KeyDown {
+            cleans: self.cleans(&settings),
+            practice: crate::onboarding::practice(),
+        });
 
         let selected_model_info = app
             .state::<Arc<ModelManager>>()
@@ -608,11 +818,17 @@ impl ShortcutAction for TranscribeAction {
         } else {
             VadPolicy::Offline
         };
-        if model_supports_streaming {
+        let boost = if model_supports_streaming {
             app.state::<Arc<crate::early_cleanup::EarlyCleanup>>()
-                .begin(settings.clone(), self.post_process);
-            tm.start_stream();
-        }
+                .begin(settings.clone(), self.cleans(&settings));
+            // The list is frozen here and bound to this dictation.
+            let boost = boost_for(&tm, &settings);
+            tm.start_stream(boost.list.clone());
+            boost
+        } else {
+            Boost::off("stream")
+        };
+        *BOOST.lock().unwrap_or_else(|p| p.into_inner()) = Some(boost);
         let plan_elapsed = plan_started.elapsed();
 
         // Sizing the overlay follows the same advertised capability. A model that
@@ -697,13 +913,14 @@ impl ShortcutAction for TranscribeAction {
             // Dynamically register the cancel shortcut in a separate task to avoid deadlock
             shortcut::register_cancel_shortcut(app);
             // Recording is running: now load the cleanup model in the background.
-            if self.post_process {
+            if self.cleans(&settings) {
                 warm_post_process_model(&settings);
             }
         } else {
             // Starting failed (for example due to blocked microphone permissions).
             // Revert UI state so we don't stay stuck in the recording overlay.
             tm.cancel_stream();
+            BOOST.lock().unwrap_or_else(|p| p.into_inner()).take();
             utils::end_recording_overlay(app, OverlayEndReason::Error);
             set_tray_state(app, TrayIconState::Idle);
             if let Some(err) = recording_error {
@@ -740,6 +957,7 @@ impl ShortcutAction for TranscribeAction {
         shortcut::unregister_cancel_shortcut(app);
 
         let stop_time = Instant::now();
+        let key_up = crate::transcription_coordinator::key_up_for(stop_time);
         debug!("TranscribeAction::stop called for binding: {}", binding_id);
 
         let ah = app.clone();
@@ -769,11 +987,25 @@ impl ShortcutAction for TranscribeAction {
         play_feedback_sound(app, SoundType::Stop);
 
         let binding_id = binding_id.to_string(); // Clone binding_id for the async task
-        let post_process = self.post_process;
+                                                 // The start-time decision holds, so start and release agree.
+        let key_down = KEY_DOWN
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .take()
+            .unwrap_or_else(|| KeyDown {
+                cleans: self.cleans(&get_settings(app)),
+                practice: false,
+            });
+        let post_process = key_down.cleans;
         let cancel_generation = rm.cancel_generation();
         let early = Arc::clone(&app.state::<Arc<crate::early_cleanup::EarlyCleanup>>());
         // Release: no new early cleanup requests from here on.
         early.close();
+        let boost = BOOST
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .take()
+            .unwrap_or_else(|| Boost::off("stream"));
 
         tauri::async_runtime::spawn(async move {
             let _guard = FinishGuard(ah.clone(), Arc::clone(&tm));
@@ -834,7 +1066,8 @@ impl ShortcutAction for TranscribeAction {
                             streamed = true;
                             Ok(text)
                         }
-                        Ok(_) => tm.transcribe(samples),
+                        // Batch fallback boosts the same list offline.
+                        Ok(_) => tm.transcribe_with_vocabulary(samples, &boost.list),
                         Err(err) => Err(err),
                     };
                     let asr_d = transcription_time.elapsed();
@@ -937,10 +1170,37 @@ impl ShortcutAction for TranscribeAction {
                             if processed.final_text.is_empty() {
                                 utils::end_recording_overlay(&ah, OverlayEndReason::NothingHeard);
                                 set_tray_state(&ah, TrayIconState::Idle);
+                            } else if key_down.practice {
+                                // Try it: to the practice box, never into an app.
+                                let text = crate::boost::list::restore_spelling(
+                                    &processed.final_text,
+                                    &boost.list,
+                                    &get_settings(&ah).custom_words,
+                                );
+                                utils::hide_recording_overlay(&ah);
+                                set_tray_state(&ah, TrayIconState::Idle);
+                                if !rm.was_cancelled_since(cancel_generation) {
+                                    crate::onboarding::emit_practice_text(
+                                        &ah,
+                                        text,
+                                        processed.post_processed_text.is_some(),
+                                    );
+                                }
                             } else {
                                 let ah_clone = ah.clone();
                                 let paste_time = Instant::now();
-                                let final_text = processed.final_text;
+                                // Cleanup may write a listed name differently.
+                                let final_text = crate::boost::list::restore_spelling(
+                                    &processed.final_text,
+                                    &boost.list,
+                                    &get_settings(&ah).custom_words,
+                                );
+                                let boost_field = if boost.reason == "on" {
+                                    "on".to_string()
+                                } else {
+                                    format!("off:{}", boost.reason)
+                                };
+                                let boost_terms = boost.list.len();
                                 let cleanup_path = processed.cleanup_path;
                                 let rm_for_paste = Arc::clone(&rm);
                                 let wait_for_paste = ah.config().identifier == crate::APP_ID;
@@ -959,10 +1219,12 @@ impl ShortcutAction for TranscribeAction {
                                         Ok(()) => {
                                             let ms = |d: std::time::Duration| d.as_millis();
                                             // One line per dictation for measuring release-to-paste.
-                                            // total starts at stop(), i.e. after the 50 ms RELEASE_GRACE.
+                                            // total starts at stop(), i.e. after the 50 ms RELEASE_GRACE;
+                                            // keyup_ms at the key-up itself.
                                             info!(
-                                                "dictation_timing total_ms={} stop_rec_ms={} asr_ms={} wav_wait_ms={} cleanup_ms={} history_ms={} paste_queue_ms={} paste_ms={} audio_s={:.1} streamed={} post_process={} cleanup_path={}",
+                                                "dictation_timing total_ms={} keyup_ms={} stop_rec_ms={} asr_ms={} wav_wait_ms={} cleanup_ms={} history_ms={} paste_queue_ms={} paste_ms={} audio_s={:.1} streamed={} post_process={} cleanup_path={} boost={} terms={}",
                                                 ms(stop_time.elapsed()),
+                                                ms(key_up.elapsed()),
                                                 ms(stop_rec_d),
                                                 ms(asr_d),
                                                 ms(wav_wait_d),
@@ -973,7 +1235,9 @@ impl ShortcutAction for TranscribeAction {
                                                 audio_s,
                                                 streamed,
                                                 post_process,
-                                                cleanup_path
+                                                cleanup_path,
+                                                boost_field,
+                                                boost_terms
                                             );
                                         }
                                         Err(e) => {
@@ -1091,13 +1355,11 @@ pub static ACTION_MAP: Lazy<HashMap<String, Arc<dyn ShortcutAction>>> = Lazy::ne
     let mut map = HashMap::new();
     map.insert(
         "transcribe".to_string(),
-        Arc::new(TranscribeAction {
-            post_process: false,
-        }) as Arc<dyn ShortcutAction>,
+        Arc::new(TranscribeAction::for_binding("transcribe")) as Arc<dyn ShortcutAction>,
     );
     map.insert(
-        "transcribe_with_post_process".to_string(),
-        Arc::new(TranscribeAction { post_process: true }) as Arc<dyn ShortcutAction>,
+        RAW_BINDING_ID.to_string(),
+        Arc::new(TranscribeAction::for_binding(RAW_BINDING_ID)) as Arc<dyn ShortcutAction>,
     );
     map.insert(
         "cancel".to_string(),
@@ -1125,6 +1387,69 @@ mod warm_up_tests {
             t + WARM_UP_EVERY - Duration::from_millis(1)
         ));
         assert!(warm_up_due(&mut last, t + WARM_UP_EVERY));
+    }
+}
+
+#[cfg(test)]
+mod main_key_tests {
+    use super::TranscribeAction;
+    use crate::settings::get_default_settings;
+
+    #[test]
+    fn early_cleanup_takes_only_the_rest_of_a_reply_that_echoes_the_prefill() {
+        use super::continuation_rest;
+        let locked = "So I think we should move the standup";
+        let echoed = "So I think we should move the standup to Thursday at 10.";
+        let rest = continuation_rest("voce_local", locked, echoed).unwrap();
+        assert_eq!(rest, " to Thursday at 10.");
+        assert_eq!(
+            crate::early_cleanup::join(locked, rest).as_deref(),
+            Some("So I think we should move the standup to Thursday at 10.")
+        );
+        // LM Studio sends only the rest; a custom reply is never cut.
+        assert_eq!(continuation_rest("custom", locked, echoed), Some(echoed));
+        // A Voce reply that rewrote the locked words falls back to whole.
+        let rewritten = "I think we should move the standup to Thursday.";
+        assert_eq!(continuation_rest("voce_local", locked, rewritten), None);
+    }
+
+    #[test]
+    fn c1_the_main_key_cleans_when_cleanup_is_on_and_the_second_key_never_does() {
+        let main = TranscribeAction { raw: false };
+        let raw = TranscribeAction { raw: true };
+        let mut settings = get_default_settings();
+        assert!(!main.cleans(&settings), "cleanup off: nothing cleans");
+        settings.post_process_enabled = true;
+        assert!(main.cleans(&settings), "row 16: Option+Space cleans");
+        assert!(!raw.cleans(&settings), "the second key pastes raw");
+    }
+
+    /// Finding 1 (review, C1): `--toggle-post-process` and macOS SIGUSR1 keep
+    /// their meaning after the second shortcut became "without cleanup".
+    #[test]
+    fn c1_external_cleanup_triggers_still_clean_when_cleanup_is_on() {
+        use crate::signal_handle::cli_binding;
+        let mut on = get_default_settings();
+        on.post_process_enabled = true;
+        let off = get_default_settings();
+        let cli = cli_binding(&["voce".into(), "--toggle-post-process".into()]).unwrap();
+        let mut entries = vec![("--toggle-post-process", cli)];
+        #[cfg(target_os = "macos")]
+        entries.push((
+            "SIGUSR1",
+            crate::signal_handle::signal_binding(signal_hook::consts::SIGUSR1)
+                .unwrap()
+                .0,
+        ));
+        for (entry, binding) in entries {
+            assert!(super::ACTION_MAP.contains_key(binding), "{entry}");
+            let action = TranscribeAction::for_binding(binding);
+            assert!(action.cleans(&on), "{entry} cleans when cleanup is on");
+            assert!(!action.cleans(&off), "{entry} is raw when cleanup is off");
+        }
+        let main = cli_binding(&["voce".into(), "--toggle-transcription".into()]);
+        assert_eq!(main, Some("transcribe"));
+        assert_eq!(cli_binding(&["voce".into(), "--cancel".into()]), None);
     }
 }
 
@@ -1214,5 +1539,40 @@ mod tests {
         assert!(!should_use_streaming_overlay(OverlayStyle::Live, false));
         assert!(!should_use_streaming_overlay(OverlayStyle::Minimal, true));
         assert!(!should_use_streaming_overlay(OverlayStyle::None, true));
+    }
+}
+
+#[cfg(test)]
+mod boost_tests {
+    use super::boost_decision;
+
+    fn list() -> Vec<String> {
+        vec!["QuillPad".to_string()]
+    }
+
+    #[test]
+    fn boost_row1_a_boosting_model_gets_the_frozen_list() {
+        let b = boost_decision(list(), true, true);
+        assert_eq!((b.reason, b.list), ("on", list()));
+    }
+
+    #[test]
+    fn boost_row2_no_list_means_no_boost() {
+        let b = boost_decision(Vec::new(), true, true);
+        assert_eq!((b.reason, b.list.len()), ("empty", 0));
+    }
+
+    #[test]
+    fn boost_row3_a_model_that_cannot_boost_gets_no_list() {
+        let b = boost_decision(list(), true, false);
+        assert_eq!((b.reason, b.list.len()), ("model", 0));
+    }
+
+    #[test]
+    fn boost_row4_a_model_still_loading_gets_the_list() {
+        // The stream starts once the load ends; the library ignores the list
+        // if the model turns out not to support vocabulary.
+        let b = boost_decision(list(), false, false);
+        assert_eq!(b.reason, "on");
     }
 }

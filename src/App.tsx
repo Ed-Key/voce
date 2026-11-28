@@ -10,17 +10,20 @@ import { toast, Toaster } from "sonner";
 import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
 import { platform } from "@tauri-apps/plugin-os";
-import {
-  checkAccessibilityPermission,
-  checkMicrophonePermission,
-} from "tauri-plugin-macos-permissions-api";
 import { ModelStateEvent, RecordingErrorEvent } from "./lib/types/events";
 import "./App.css";
 import AccessibilityPermissions from "./components/AccessibilityPermissions";
 import SecureInputWarning from "./components/SecureInputWarning";
-import Onboarding, { AccessibilityOnboarding } from "./components/onboarding";
+import Onboarding from "./components/onboarding";
+import {
+  api as onboardingApi,
+  setPreviewMode,
+  STEPS,
+  type OnboardingStep,
+} from "./components/onboarding/api";
 import {
   DebugSettings,
+  StorageSettings,
   type OnboardingPreviewStep,
 } from "./components/settings";
 import { ErrorBoundary } from "./components/ErrorBoundary";
@@ -31,21 +34,24 @@ import { useSettingsStore } from "./stores/settingsStore";
 import { commands } from "@/bindings";
 import { getLanguageDirection, initializeRTL } from "@/lib/utils/rtl";
 
-type OnboardingStep = "accessibility" | "model" | "done";
+/** Where onboarding opens: the saved step, after Permissions when a
+ *  permission was revoked since. */
+type OnboardingStart = { start: OnboardingStep; regrant: boolean };
 
 // Call pages and Memory keep their own wide layouts; every other page uses
 // the shared 680 px column.
 const FULL_WIDTH_SECTIONS = new Set<SidebarSection>(["calls", "memory"]);
 
-// Stable identity so preview effects do not re-run due to callback changes.
-const NOOP = () => {};
-
 const renderSettingsContent = (
   section: SidebarSection,
   onPreviewOnboarding: (step: OnboardingPreviewStep) => void,
+  onSectionChange: (section: SidebarSection) => void,
 ) => {
   if (section === "debug") {
     return <DebugSettings onPreviewOnboarding={onPreviewOnboarding} />;
+  }
+  if (section === "storage") {
+    return <StorageSettings onOpenCalls={() => onSectionChange("calls")} />;
   }
 
   const ActiveComponent =
@@ -55,17 +61,15 @@ const renderSettingsContent = (
 
 function App() {
   const { t, i18n } = useTranslation();
-  const [onboardingStep, setOnboardingStep] = useState<OnboardingStep | null>(
+  // null while checking; "done" shows the main window.
+  const [onboarding, setOnboarding] = useState<OnboardingStart | "done" | null>(
     null,
   );
   const [onboardingPreview, setOnboardingPreview] =
     useState<OnboardingPreviewStep | null>(null);
-  // Track if this is a returning user who just needs to grant permissions
-  // (vs a new user who needs full onboarding including model selection)
-  const [isReturningUser, setIsReturningUser] = useState(false);
   const [currentSection, setCurrentSection] =
     useState<SidebarSection>("general");
-  const { settings, updateSetting } = useSettings();
+  const { settings, updateSetting, refreshSettings } = useSettings();
   const direction = getLanguageDirection(i18n.language);
   const refreshAudioDevices = useSettingsStore(
     (state) => state.refreshAudioDevices,
@@ -77,8 +81,7 @@ function App() {
   const settingsScrollRef = useRef<HTMLDivElement>(null);
   const isShowingOnboarding =
     onboardingPreview !== null ||
-    onboardingStep === "accessibility" ||
-    onboardingStep === "model";
+    (onboarding !== null && onboarding !== "done");
 
   // Classic scrollbars consume layout space. Reserve a matching gutter on the
   // opposite edge while onboarding is visible so its content stays centered in
@@ -88,6 +91,12 @@ function App() {
     document.documentElement.toggleAttribute(attribute, isShowingOnboarding);
     return () => document.documentElement.removeAttribute(attribute);
   }, [isShowingOnboarding]);
+
+  // The debug preview runs the real screens against an inert backend.
+  useEffect(() => {
+    setPreviewMode(onboardingPreview !== null);
+    return () => setPreviewMode(false);
+  }, [onboardingPreview]);
 
   // Reset the scroll position whenever the active section changes.
   useLayoutEffect(() => {
@@ -105,7 +114,7 @@ function App() {
 
   // Initialize Enigo, shortcuts, and refresh audio devices when main app loads
   useEffect(() => {
-    if (onboardingStep === "done" && !hasCompletedPostOnboardingInit.current) {
+    if (onboarding === "done" && !hasCompletedPostOnboardingInit.current) {
       hasCompletedPostOnboardingInit.current = true;
       Promise.all([
         commands.initializeEnigo(),
@@ -116,7 +125,7 @@ function App() {
       refreshAudioDevices();
       refreshOutputDevices();
     }
-  }, [onboardingStep, refreshAudioDevices, refreshOutputDevices]);
+  }, [onboarding, refreshAudioDevices, refreshOutputDevices]);
 
   // Handle keyboard shortcuts for debug mode toggle
   useEffect(() => {
@@ -236,74 +245,42 @@ function App() {
   };
 
   const checkOnboardingStatus = async () => {
+    let start: OnboardingStep;
     try {
-      const settingsResult = await commands.getAppSettings();
-      const hasCompletedOnboarding =
-        settingsResult.status === "ok" &&
-        settingsResult.data.onboarding_completed === true;
-      const currentPlatform = platform();
-
-      if (hasCompletedOnboarding) {
-        // Returning user - check if they need to grant permissions first
-        setIsReturningUser(true);
-
-        if (currentPlatform === "macos") {
-          try {
-            const [hasAccessibility, hasMicrophone] = await Promise.all([
-              checkAccessibilityPermission(),
-              checkMicrophonePermission(),
-            ]);
-            if (!hasAccessibility || !hasMicrophone) {
-              await revealMainWindowForPermissions();
-              setOnboardingStep("accessibility");
-              return;
-            }
-          } catch (e) {
-            console.warn("Failed to check macOS permissions:", e);
-            // If we can't check, proceed to main app and let them fix it there
-          }
-        }
-
-        if (currentPlatform === "windows") {
-          try {
-            const microphoneStatus =
-              await commands.getWindowsMicrophonePermissionStatus();
-            if (
-              microphoneStatus.supported &&
-              microphoneStatus.overall_access === "denied"
-            ) {
-              await revealMainWindowForPermissions();
-              setOnboardingStep("accessibility");
-              return;
-            }
-          } catch (e) {
-            console.warn("Failed to check Windows microphone permissions:", e);
-            // If we can't check, proceed to main app and let them fix it there
-          }
-        }
-
-        setOnboardingStep("done");
-      } else {
-        // New user - start full onboarding
-        setIsReturningUser(false);
-        setOnboardingStep("accessibility");
-      }
+      start = await onboardingApi.getStep();
     } catch (error) {
-      console.error("Failed to check onboarding status:", error);
-      setOnboardingStep("accessibility");
+      console.error("Failed to read the onboarding step:", error);
+      start = "welcome";
     }
+    // Past Permissions, a revoked permission sends the user back there first,
+    // then to the saved step (or the main window).
+    if (STEPS.indexOf(start) > STEPS.indexOf("permissions")) {
+      try {
+        const granted = await onboardingApi.checkPermissions();
+        if (!granted.microphone || !granted.accessibility) {
+          await revealMainWindowForPermissions();
+          setOnboarding({ start, regrant: true });
+          return;
+        }
+      } catch (e) {
+        // If we can't check, proceed and let the user fix it in the app.
+        console.warn("Failed to check permissions:", e);
+      }
+    }
+    setOnboarding(start === "done" ? "done" : { start, regrant: false });
   };
 
-  const handleAccessibilityComplete = useCallback(() => {
-    // Returning users already have models, skip to main app
-    // New users need to select a model
-    setOnboardingStep(isReturningUser ? "done" : "model");
-  }, [isReturningUser]);
+  const handleOnboardingDone = useCallback(
+    (openSection?: "calls") => {
+      if (openSection) setCurrentSection(openSection);
+      // Onboarding saved settings through its own commands; reload them.
+      refreshSettings();
+      setOnboarding("done");
+    },
+    [refreshSettings],
+  );
 
-  const handleModelSelected = () => {
-    // Transition to main app - user has started a download
-    setOnboardingStep("done");
-  };
+  const handlePreviewDone = useCallback(() => setOnboardingPreview(null), []);
 
   // Rendered once around every step below (including onboarding) so
   // toast.error() calls surface to the user. sonner renders via a portal, so
@@ -328,7 +305,7 @@ function App() {
   );
 
   // Still checking onboarding status
-  if (onboardingStep === null) {
+  if (onboarding === null) {
     return null;
   }
 
@@ -342,26 +319,29 @@ function App() {
     // as it does during first-run onboarding.
     content = (
       <>
-        {onboardingPreview === "accessibility" ? (
-          <AccessibilityOnboarding onComplete={NOOP} preview />
-        ) : (
-          <Onboarding onModelSelected={NOOP} preview />
-        )}
+        <Onboarding
+          key={onboardingPreview}
+          start={onboardingPreview}
+          onDone={handlePreviewDone}
+          preview
+        />
         <button
           type="button"
           onClick={() => setOnboardingPreview(null)}
-          className="fixed top-4 end-4 z-50 rounded-lg border border-mid-gray/20 bg-background px-4 py-2 text-sm font-medium text-text shadow-lg hover:bg-background-ui/30 cursor-pointer"
+          className="fixed top-4 end-4 z-50 v-btn v-secondary"
         >
           {t("settings.debug.onboardingPreview.exitButton")}
         </button>
       </>
     );
-  } else if (onboardingStep === "accessibility") {
+  } else if (onboarding !== "done") {
     content = (
-      <AccessibilityOnboarding onComplete={handleAccessibilityComplete} />
+      <Onboarding
+        start={onboarding.start}
+        regrant={onboarding.regrant}
+        onDone={handleOnboardingDone}
+      />
     );
-  } else if (onboardingStep === "model") {
-    content = <Onboarding onModelSelected={handleModelSelected} />;
   } else {
     content = (
       <div
@@ -387,7 +367,11 @@ function App() {
               <div className="flex flex-col items-center px-4 pb-4 gap-4 min-h-full">
                 <AccessibilityPermissions />
                 <SecureInputWarning />
-                {renderSettingsContent(currentSection, setOnboardingPreview)}
+                {renderSettingsContent(
+                  currentSection,
+                  setOnboardingPreview,
+                  setCurrentSection,
+                )}
               </div>
             ) : (
               <div className="v-col min-h-full">
@@ -395,7 +379,11 @@ function App() {
                   <AccessibilityPermissions />
                   <SecureInputWarning />
                 </div>
-                {renderSettingsContent(currentSection, setOnboardingPreview)}
+                {renderSettingsContent(
+                  currentSection,
+                  setOnboardingPreview,
+                  setCurrentSection,
+                )}
               </div>
             )}
           </main>
@@ -404,22 +392,11 @@ function App() {
     );
   }
 
+  // Onboarding draws its own full window (drag strip included).
   return (
     <>
       {toaster}
-      {onboardingPreview || onboardingStep !== "done" ? (
-        // Onboarding has no sidebar, which holds the main window's drag
-        // regions. Under the hidden title bar this top row is the only way to
-        // move the window; content scrolls below it, never underneath.
-        <div className="h-screen flex flex-col">
-          <div data-tauri-drag-region className="h-8 shrink-0" />
-          <div className="flex-1 min-h-0 overflow-y-auto [scrollbar-gutter:stable_both-edges] [&>.h-screen]:h-full">
-            {content}
-          </div>
-        </div>
-      ) : (
-        content
-      )}
+      {content}
     </>
   );
 }

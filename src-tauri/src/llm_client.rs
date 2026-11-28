@@ -172,8 +172,28 @@ fn create_client(provider: &PostProcessProvider, api_key: &str) -> Result<reqwes
     let headers = build_headers(provider, api_key)?;
     reqwest::Client::builder()
         .default_headers(headers)
+        .redirect(same_origin_redirects())
         .build()
         .map_err(|e| report_reqwest_error("Failed to build HTTP client", &e))
+}
+
+/// Follow redirects only within the first URL's origin. The key rides in
+/// default headers, and reqwest strips only `Authorization` across hosts,
+/// not Anthropic's `x-api-key`; a redirect elsewhere must never get it.
+fn same_origin_redirects() -> reqwest::redirect::Policy {
+    reqwest::redirect::Policy::custom(|attempt| {
+        let same = attempt
+            .previous()
+            .first()
+            .is_some_and(|first| first.origin() == attempt.url().origin());
+        if attempt.previous().len() >= 10 {
+            attempt.error("too many redirects")
+        } else if same {
+            attempt.follow()
+        } else {
+            attempt.stop()
+        }
+    })
 }
 
 /// Format a bounded error source chain.
@@ -289,28 +309,6 @@ fn report_reqwest_error(context: &str, error: &reqwest::Error) -> String {
     details
 }
 
-/// Send a chat completion request to an OpenAI-compatible API
-/// Returns Ok(Some(content)) on success, Ok(None) if response has no content,
-/// or Err on actual errors (HTTP, parsing, etc.)
-pub async fn send_chat_completion(
-    provider: &PostProcessProvider,
-    api_key: String,
-    model: &str,
-    prompt: String,
-    disable_reasoning: bool,
-) -> Result<Option<String>, String> {
-    send_chat_completion_with_schema(
-        provider,
-        api_key,
-        model,
-        prompt,
-        None,
-        None,
-        disable_reasoning,
-    )
-    .await
-}
-
 /// Ask the model to continue a partial answer: the request ends with an
 /// assistant message holding `assistant_prefix`, and the reply is only the rest.
 /// Local llama.cpp servers (LM Studio) support this; most cloud APIs do not.
@@ -320,6 +318,7 @@ pub async fn send_chat_completion_continuing(
     api_key: String,
     model: &str,
     prompt: String,
+    system_prompt: Option<String>,
     assistant_prefix: String,
     disable_reasoning: bool,
 ) -> Result<Option<String>, String> {
@@ -328,7 +327,7 @@ pub async fn send_chat_completion_continuing(
         api_key,
         model,
         prompt,
-        None,
+        system_prompt,
         None,
         disable_reasoning,
         Some(assistant_prefix),
@@ -516,6 +515,25 @@ async fn chat_completion_request(
     Ok(choice.message.content.clone())
 }
 
+/// The HTTP status of an error from a chat completion request, if the server
+/// answered with one (the format comes from `chat_completion_request`).
+pub fn status_of(error: &str) -> Option<u16> {
+    error
+        .strip_prefix("API request failed with status ")?
+        .get(..3)?
+        .parse()
+        .ok()
+}
+
+/// The HTTP status of a `fetch_models` error, if the server answered.
+pub fn model_list_status(error: &str) -> Option<u16> {
+    error
+        .strip_prefix("Model list request failed (")?
+        .get(..3)?
+        .parse()
+        .ok()
+}
+
 /// True when `base_url` points at this machine (localhost, 127.0.0.0/8, ::1).
 pub fn is_loopback(base_url: &str) -> bool {
     let Ok(url) = reqwest::Url::parse(base_url) else {
@@ -644,6 +662,87 @@ mod tests {
     use super::*;
     use std::fmt;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    /// An HTTP server on a free port answering every request with `reply`
+    /// (a full response); returns its origin and the requests it received.
+    fn recording_server(
+        reply: impl Fn(&str) -> String + Send + Sync + 'static,
+    ) -> (String, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let log = seen.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                let mut buf = [0u8; 65536];
+                let n = stream.read(&mut buf).unwrap_or(0);
+                let request = String::from_utf8_lossy(&buf[..n]).to_string();
+                let _ = stream.write_all(reply(&request).as_bytes());
+                log.lock().unwrap().push(request);
+            }
+        });
+        (format!("http://127.0.0.1:{port}"), seen)
+    }
+
+    fn anthropic_at(base_url: &str) -> PostProcessProvider {
+        PostProcessProvider {
+            id: "anthropic".into(),
+            label: "Anthropic".into(),
+            base_url: base_url.into(),
+            allow_base_url_edit: false,
+            models_endpoint: Some("/models".into()),
+            supports_structured_output: false,
+        }
+    }
+
+    #[tokio::test]
+    async fn review2_n2_a_key_never_follows_a_redirect_to_another_origin() {
+        let (elsewhere, seen_elsewhere) = recording_server(|_: &str| {
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 11\r\nConnection: close\r\n\r\n{\"data\":[]}".into()
+        });
+        let to = format!("{elsewhere}/v1/models");
+        let (origin, _) = recording_server(move |_: &str| {
+            format!("HTTP/1.1 307 Temporary Redirect\r\nLocation: {to}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+        });
+        let provider = anthropic_at(&format!("{origin}/v1"));
+        assert!(fetch_models(&provider, "sk-ant-secret".into())
+            .await
+            .is_err());
+        let _ = send_chat_completion_with_schema(
+            &provider,
+            "sk-ant-secret".into(),
+            "m",
+            "hi".into(),
+            None,
+            None,
+            false,
+        )
+        .await;
+        assert!(
+            seen_elsewhere.lock().unwrap().is_empty(),
+            "the other origin never saw a request, let alone the key"
+        );
+    }
+
+    #[tokio::test]
+    async fn same_origin_redirects_still_work() {
+        let (origin, seen) = recording_server(|request| {
+            if request.starts_with("GET /v1/models") {
+                "HTTP/1.1 307 Temporary Redirect\r\nLocation: /v2/models\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".into()
+            } else {
+                let body = "{\"data\":[{\"id\":\"claude\"}]}";
+                format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len())
+            }
+        });
+        let provider = anthropic_at(&format!("{origin}/v1"));
+        assert_eq!(
+            fetch_models(&provider, "sk-ant-secret".into()).await,
+            Ok(vec!["claude".to_string()])
+        );
+        assert_eq!(seen.lock().unwrap().len(), 2);
+    }
 
     #[derive(Debug)]
     struct TestError {

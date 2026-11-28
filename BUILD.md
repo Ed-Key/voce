@@ -12,6 +12,7 @@ Voce builds on macOS only (14.4 or later; developed on Apple Silicon).
 ## Steps
 
 ```bash
+scripts/vendor-transcribe-cpp.sh   # the patched transcribe-cpp-sys (src-tauri/patches/)
 bun install
 mkdir -p src-tauri/resources/models
 curl -o src-tauri/resources/models/silero_vad_v4.onnx https://blob.handy.computer/silero_vad_v4.onnx

@@ -1,0 +1,210 @@
+/* The storage block, shared by the last onboarding step and Settings >
+   Storage. Ported from onboarding-mockups/7-storage.html with every selector
+   scoped to .vstore. */
+.vstore {
+  --s1: #6f6be3;
+  --s2: #9d9aff;
+  --s3: #cfcdff;
+  --s4: #8a879c;
+  --s5: #5f5c70;
+  --s6: #4a4859;
+  --s7: #3a3946;
+  --disk-used: #5e5c6e;
+}
+:root[data-theme="light"] .vstore {
+  --s1: #3a36a0;
+  --s2: #6763d0;
+  --s3: #a9a6ee;
+  --s4: #8d8a9c;
+  --s5: #b3b0c0;
+  --s6: #c9c6d3;
+  --s7: #dcd9e2;
+  --disk-used: #b9b5ab;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) .vstore {
+    --s1: #3a36a0;
+    --s2: #6763d0;
+    --s3: #a9a6ee;
+    --s4: #8d8a9c;
+    --s5: #b3b0c0;
+    --s6: #c9c6d3;
+    --s7: #dcd9e2;
+    --disk-used: #b9b5ab;
+  }
+}
+
+/* ---- from 7-storage.html ---- */
+.vstore .store {
+  width: 640px;
+}
+.vstore .pic {
+  margin-bottom: 20px;
+}
+.vstore .pic .sum {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.vstore .pic .sum .big {
+  font: 650 22px/28px var(--font);
+  letter-spacing: -0.01em;
+}
+.vstore .pic .sum .big small {
+  font: 500 13.5px/18px var(--font);
+  color: var(--text-2);
+  letter-spacing: 0;
+  margin-left: 6px;
+}
+.vstore .pic .sum .free {
+  font: 400 12.5px/16px var(--font);
+  color: var(--text-3);
+}
+.vstore .pic .sum .free b {
+  font-weight: 500;
+  color: var(--text-2);
+}
+.vstore .disk {
+  position: relative;
+  display: flex;
+  height: 8px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--track);
+}
+.vstore .disk .used {
+  width: 36.8%;
+  background: var(--disk-used);
+}
+.vstore .disk .voce {
+  width: 3px;
+  background: var(--accent);
+  box-shadow: 0 0 0 1px var(--bg);
+}
+.vstore .fan {
+  display: block;
+  width: 100%;
+  height: 30px;
+}
+.vstore .fan path {
+  fill: var(--accent-wash);
+  stroke: none;
+}
+.vstore .fan line {
+  stroke: color-mix(in srgb, var(--accent) 45%, transparent);
+  stroke-width: 1;
+}
+.vstore .mix {
+  display: flex;
+  height: 16px;
+  border-radius: 5px;
+  overflow: hidden;
+  gap: 2px;
+}
+.vstore .mix i {
+  display: block;
+}
+.vstore .legend-l {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 6px;
+  font: 400 12px/16px var(--font);
+  color: var(--text-3);
+}
+.vstore .list .v-row {
+  min-height: 44px;
+  gap: 12px;
+}
+.vstore .sw {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  flex: none;
+}
+.vstore .list .nm {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font: 500 14px/20px var(--font);
+}
+.vstore .list .nm small {
+  font: 400 12.5px/16px var(--font);
+  color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.vstore .list .sz {
+  width: 76px;
+  text-align: right;
+  font: 500 13.5px/18px var(--font);
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+.vstore .list .ac {
+  width: 28px;
+  display: flex;
+  justify-content: flex-end;
+  position: relative;
+}
+.vstore .list .ac .v-ib:hover,
+.vstore .list .ac .v-ib.on {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+}
+.vstore .list .tot {
+  background: color-mix(in srgb, var(--text) 2.5%, transparent);
+}
+.vstore .list .tot .nm {
+  font-weight: 600;
+}
+.vstore .list .tot .sz {
+  color: var(--text);
+  font-weight: 600;
+}
+.vstore .pop {
+  position: absolute;
+  right: -6px;
+  top: 34px;
+  width: 280px;
+  z-index: 10;
+}
+.vstore .pop .btns {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
+.vstore .v-btn.v-destroy {
+  background: color-mix(in srgb, var(--danger) 16%, transparent);
+  color: var(--danger);
+}
+
+/* The mockup's group sets overflow: hidden (onb.css); the confirm popover
+   must reach past the last rows, so the total row rounds its own corners. */
+.vstore .v-group {
+  margin-bottom: 0;
+}
+.vstore .list .tot {
+  border-radius: 0 0 11px 11px;
+}
+.vstore .wait {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font: 500 13.5px/18px var(--font);
+  color: var(--text-2);
+}
+/* placement: onboarding step and Settings page */
+.vob-storage .hd {
+  margin-bottom: 26px;
+}
+.vob-storage .stage {
+  inset: 48px 0 92px;
+}
+.v-col .vstore .store {
+  width: 100%;
+}
