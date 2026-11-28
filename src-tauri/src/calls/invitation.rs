@@ -409,13 +409,16 @@ pub async fn respond_call_invitation(
         };
         if matches!(choice, Choice::Start) {
             if offer.fictional {
-                // Preview Start can create only a text fixture, never an audio session.
-                destination.assistie_run = Some(
-                    super::assistie::create_assistie_fixture(app.clone())
-                        .await?
-                        .run_id
-                        .clone(),
-                );
+                // Preview Start can create only a text fixture, never an audio session, and only when Terra
+                // (experimental) is on; otherwise the preview simply closes.
+                if super::assistie::terra_enabled(&app) {
+                    destination.assistie_run = Some(
+                        super::assistie::create_assistie_fixture(app.clone())
+                            .await?
+                            .run_id
+                            .clone(),
+                    );
+                }
             } else {
                 let calls = app.state::<super::CallNotesManager>();
                 let current = calls.detection_snapshot();

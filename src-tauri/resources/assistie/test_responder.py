@@ -5,6 +5,7 @@ from pathlib import Path
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import unittest
@@ -405,6 +406,7 @@ class ParentExitTest(unittest.TestCase):
         token = call.command('connect_codex', {'proactive': True})['connection']['id']
         proc = subprocess.Popen([sys.executable, '-I', '-B', str(HERE / 'responder.py'), str(call.root), call.run, token],
                                 stdin=subprocess.PIPE)
+        proc.stdin.write(b'go\n'); proc.stdin.flush()
         self.assertEqual(proc.wait(10), 0)
         proc.stdin.close()
         self.assertIn(call.command('snapshot', {})['status'], ('disabled', 'expired'))
@@ -425,6 +427,7 @@ class ParentExitTest(unittest.TestCase):
         token = call.command('connect_codex', {'proactive': True})['connection']['id']
         proc = subprocess.Popen([sys.executable, '-I', '-B', str(HERE / 'responder.py'), str(call.root), call.run, token],
                                 stdin=subprocess.PIPE, env=env, start_new_session=True)
+        proc.stdin.write(b'go\n'); proc.stdin.flush()
         deadline = time.monotonic() + 8
         while not (call.data / 'fake.jsonl').exists() or '"input"' not in (call.data / 'fake.jsonl').read_text():
             self.assertLess(time.monotonic(), deadline)
@@ -440,6 +443,28 @@ class ParentExitTest(unittest.TestCase):
         if alive:
             os.killpg(proc.pid, signal.SIGKILL)
         self.assertEqual(alive, [], 'no process of the responder group may survive')
+
+
+class GoBarrierTest(unittest.TestCase):
+    """Terra gate: a responder refused after its spawn starts no work and no codex."""
+
+    def test_closed_pipe_before_go_exits_without_touching_anything(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)  # empty: any bridge or memory read would fail loudly
+            proc = subprocess.Popen([sys.executable, '-I', '-B', str(HERE / 'responder.py'), str(root), 'meeting-x', 'c'],
+                                    stdin=subprocess.PIPE, stderr=subprocess.PIPE)
+            proc.stdin.close()
+            self.assertEqual(proc.wait(5), 0)
+            self.assertEqual(proc.stderr.read(), b'')
+            proc.stderr.close()
+            self.assertEqual(list(root.iterdir()), [], 'a refused responder created files')
+
+    def test_go_must_be_exact(self):
+        for data, expected in ((b'go\n', True), (b'', False), (b'no\n', False), (b'gogo\n', False)):
+            r, w = os.pipe()
+            os.write(w, data); os.close(w)
+            self.assertEqual(responder.wait_for_go(r), expected, data)
+            os.close(r)
 
 
 if __name__ == '__main__':

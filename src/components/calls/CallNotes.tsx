@@ -9,6 +9,7 @@ import { AssistiePanel, type AssistieSnapshot } from "./AssistiePanel";
 import { ChevronLeft, Info, Mic, Sparkles, Square, Trash2 } from "lucide-react";
 import { CallObservatory } from "./CallObservatory";
 import { TerraMenu } from "./TerraMenu";
+import { type Tab, tabAfterSwitch, terraOn, visibleTabs } from "./terraGate";
 import { ToggleSwitch } from "../ui/ToggleSwitch";
 import { PageHeader } from "../ui/PageHeader";
 import { Button } from "../ui/Button";
@@ -101,8 +102,6 @@ function days(calls: CallSession[], t: (key: string) => string) {
 
 const REPLAY_SETTLE_MS = 120_000;
 const REPLAY_READ_MS = 2000;
-const TABS = ["notes", "transcript", "system", "terra"] as const;
-type Tab = (typeof TABS)[number];
 
 /** The small print of a page, one click away. */
 function CallInfo({
@@ -141,6 +140,11 @@ export function CallNotes() {
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
   const [detection, setDetection] = useState<Detection | null>(null);
   const [tab, setTab] = useState<Tab>("notes");
+  // Terra is experimental: its tab, controls, panels and saved replies show only while the switch is on.
+  const terra = terraOn({
+    experimental_enabled: getSetting("experimental_enabled"),
+  });
+  const tabs = visibleTabs(terra);
   const [notes, setNotes] = useState("");
   const [replay, setReplay] = useState<ObservatoryData | null>(null);
   const [replayFailed, setReplayFailed] = useState(false);
@@ -153,6 +157,13 @@ export function CallNotes() {
   const [callAssistieOpen, setCallAssistieOpen] = useState(false);
   const [assistieArchive, setAssistieArchive] = useState(false);
   const [historyOffset, setHistoryOffset] = useState(0);
+  // Switching Terra off closes whatever Terra view is open.
+  useEffect(() => {
+    if (terra) return;
+    setTab((current) => tabAfterSwitch(current, false));
+    setShowAssistieFixture(false);
+    setCallAssistieOpen(false);
+  }, [terra]);
   const loadAssistieFixture = useCallback(
     () =>
       assistieArchive
@@ -599,7 +610,7 @@ export function CallNotes() {
                       descriptionMode="inline"
                     />
                     <p>{t("calls.detectionScope")}</p>
-                    <AssistiePlugin />
+                    {terra && <AssistiePlugin />}
                     <div className="call-info-actions">
                       <button
                         disabled={busy || !!live?.active}
@@ -611,35 +622,37 @@ export function CallNotes() {
                       >
                         {t("calls.invitation.preview")}
                       </button>
-                      <button
-                        disabled={busy || !!live?.active}
-                        onClick={() => {
-                          if (showAssistieFixture) {
-                            setShowAssistieFixture(false);
-                            return;
-                          }
-                          setBusy(true);
-                          void invoke<AssistieSnapshot>(
-                            "create_assistie_fixture",
-                          )
-                            .then((value) => {
-                              setAssistieRun(value.run_id);
-                              setAssistieCall(null);
-                              setAssistieArchive(false);
-                              setCallAssistieOpen(false);
-                              setShowAssistieFixture(true);
-                              setError("");
-                            })
-                            .catch((failure) => setError(String(failure)))
-                            .finally(() => setBusy(false));
-                        }}
-                      >
-                        {t(
-                          showAssistieFixture
-                            ? "calls.assistie.close"
-                            : "calls.assistie.fixture",
-                        )}
-                      </button>
+                      {terra && (
+                        <button
+                          disabled={busy || !!live?.active}
+                          onClick={() => {
+                            if (showAssistieFixture) {
+                              setShowAssistieFixture(false);
+                              return;
+                            }
+                            setBusy(true);
+                            void invoke<AssistieSnapshot>(
+                              "create_assistie_fixture",
+                            )
+                              .then((value) => {
+                                setAssistieRun(value.run_id);
+                                setAssistieCall(null);
+                                setAssistieArchive(false);
+                                setCallAssistieOpen(false);
+                                setShowAssistieFixture(true);
+                                setError("");
+                              })
+                              .catch((failure) => setError(String(failure)))
+                              .finally(() => setBusy(false));
+                          }}
+                        >
+                          {t(
+                            showAssistieFixture
+                              ? "calls.assistie.close"
+                              : "calls.assistie.fixture",
+                          )}
+                        </button>
+                      )}
                     </div>
                   </CallInfo>
                 </div>
@@ -658,7 +671,7 @@ export function CallNotes() {
               </span>
             </div>
           )}
-          {showAssistieFixture ? (
+          {terra && showAssistieFixture ? (
             assistiePanel
           ) : calls.length ? (
             days(calls, t).map(([day, calls]) => (
@@ -740,7 +753,9 @@ export function CallNotes() {
               <div className="tools end">
                 {session.active ? (
                   <>
-                    <TerraMenu key={session.id} sessionId={session.id} />
+                    {terra && (
+                      <TerraMenu key={session.id} sessionId={session.id} />
+                    )}
                     <button
                       className="icon-btn ask"
                       disabled={busy}
@@ -783,14 +798,16 @@ export function CallNotes() {
                         ),
                       })}
                     </p>
-                    <div className="call-info-actions">
-                      <button
-                        disabled={busy}
-                        onClick={() => toggleAssistie(session)}
-                      >
-                        {terraLabel}
-                      </button>
-                    </div>
+                    {terra && (
+                      <div className="call-info-actions">
+                        <button
+                          disabled={busy}
+                          onClick={() => toggleAssistie(session)}
+                        >
+                          {terraLabel}
+                        </button>
+                      </div>
+                    )}
                   </CallInfo>
                 )}
               </div>
@@ -812,7 +829,7 @@ export function CallNotes() {
                 role="tablist"
                 aria-label={t("calls.title")}
               >
-                {TABS.map((value, index) => (
+                {tabs.map((value, index) => (
                   <button
                     key={value}
                     id={`call-tab-${value}`}
@@ -828,17 +845,17 @@ export function CallNotes() {
                         )
                       ) {
                         e.preventDefault();
-                        const last = TABS.length - 1;
+                        const last = tabs.length - 1;
                         const next =
                           e.key === "Home"
                             ? 0
                             : e.key === "End"
                               ? last
                               : (index + (e.key === "ArrowRight" ? 1 : last)) %
-                                TABS.length;
-                        setTab(TABS[next]);
+                                tabs.length;
+                        setTab(tabs[next]);
                         document
-                          .getElementById(`call-tab-${TABS[next]}`)
+                          .getElementById(`call-tab-${tabs[next]}`)
                           ?.focus();
                       }
                     }}
@@ -862,7 +879,7 @@ export function CallNotes() {
               </div>
             )}
           </div>
-          {callAssistieOpen && assistieCall === session.id && (
+          {terra && callAssistieOpen && assistieCall === session.id && (
             <div className="call-assistie-popover">{assistiePanel}</div>
           )}
           <div
@@ -943,7 +960,9 @@ export function CallNotes() {
                   data={replay}
                   live={liveCall}
                   view={tab as "system" | "terra"}
-                  onOpenTerra={() => setTab("terra")}
+                  onOpenTerra={() => {
+                    if (terra) setTab("terra");
+                  }}
                 />
               ) : (
                 <p className="call-empty">
@@ -1148,7 +1167,7 @@ export function CallNotes() {
                       }
                     />
                   </div>
-                  {!!replay?.replies.length && (
+                  {terra && !!replay?.replies.length && (
                     <div className="panel desk call-pointers">
                       <h3>
                         <Sparkles />

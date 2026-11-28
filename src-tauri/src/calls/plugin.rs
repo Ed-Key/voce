@@ -74,12 +74,23 @@ fn root(app: &AppHandle) -> Result<std::path::PathBuf, String> {
         .join("assistie"))
 }
 
-#[cfg(target_os = "macos")]
-fn launch(app: &AppHandle) -> Result<(), String> {
-    let runtime = app
-        .try_state::<PluginRuntime>()
-        .ok_or("Plugin unavailable")?;
+/// Starts the plugin unless one runs: `read_key` fetches the tunnel key, `start` spawns the supervisor without
+/// it, and `give_key` hands it over. `allowed` is the Experimental switch (Terra is experimental). Everything runs
+/// under the runtime lock the switch-off shutdown takes. The switch is checked before the Keychain read, again
+/// after it (the read can wait on a prompt for as long as nobody answers), and once more after the spawn, so a
+/// supervisor that may not run never holds the key.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub(super) fn launch_with(
+    runtime: &PluginRuntime,
+    allowed: impl Fn() -> bool,
+    read_key: impl FnOnce() -> Result<Vec<u8>, String>,
+    start: impl FnOnce() -> Result<Child, String>,
+    give_key: impl FnOnce(&mut Child, &[u8]) -> Result<(), String>,
+) -> Result<(), String> {
     let mut slot = runtime.0.lock().map_err(|_| "Plugin is busy")?;
+    if !allowed() {
+        return Err(super::assistie::TERRA_OFF.into());
+    }
     if let Some(child) = slot.as_mut() {
         if child
             .try_wait()
@@ -89,8 +100,47 @@ fn launch(app: &AppHandle) -> Result<(), String> {
             return Ok(());
         }
     }
-    let key = security_framework::passwords::get_generic_password(SERVICE, ACCOUNT)
-        .map_err(|_| "Add a dedicated tunnel runtime key to connect")?;
+    let key = read_key()?;
+    if !allowed() {
+        return Err(super::assistie::TERRA_OFF.into());
+    }
+    let mut child = start()?;
+    // The switch can be saved as off while the supervisor is prepared and spawned; saving does not take this
+    // lock, but the cleanup's shutdown does, so it runs after this and stops anything published here.
+    let refused = if allowed() {
+        give_key(&mut child, &key).err()
+    } else {
+        Some(super::assistie::TERRA_OFF.to_string())
+    };
+    if let Some(error) = refused {
+        // It never got the key, so it has opened no tunnel and is only waiting on its input.
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(error);
+    }
+    *slot = Some(child);
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn launch(app: &AppHandle) -> Result<(), String> {
+    let runtime = app
+        .try_state::<PluginRuntime>()
+        .ok_or("Plugin unavailable")?;
+    launch_with(
+        &runtime,
+        || super::assistie::terra_enabled(app),
+        || {
+            security_framework::passwords::get_generic_password(SERVICE, ACCOUNT)
+                .map_err(|_| "Add a dedicated tunnel runtime key to connect".to_string())
+        },
+        || start_supervisor(app),
+        give_key,
+    )
+}
+
+#[cfg(target_os = "macos")]
+fn start_supervisor(app: &AppHandle) -> Result<Child, String> {
     let root = root(app)?;
     super::assistie::prepare(&root)?;
     let script = root.join("plugin.py");
@@ -116,7 +166,8 @@ fn launch(app: &AppHandle) -> Result<(), String> {
         return Err("Tunnel runtime is missing from the dev bundle".into());
     }
     use std::os::unix::process::CommandExt;
-    let mut child = Command::new("/usr/bin/python3")
+    // The supervisor reads its key from stdin before it starts the tunnel; `give_key` sends it.
+    Command::new("/usr/bin/python3")
         .process_group(0)
         .args(["-I", "-B"])
         .arg(script)
@@ -126,27 +177,19 @@ fn launch(app: &AppHandle) -> Result<(), String> {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
-        .map_err(|_| "Cannot start private plugin")?;
-    let result = child
-        .stdin
-        .as_mut()
-        .ok_or("Missing private input")
-        .and_then(|input| {
-            let text = std::str::from_utf8(&key).map_err(|_| "Invalid runtime key")?;
-            let mut data =
-                serde_json::to_vec(&json!({"key":text})).map_err(|_| "Invalid runtime key")?;
-            data.push(b'\n');
-            input
-                .write_all(&data)
-                .map_err(|_| "Cannot start private plugin")
-        });
-    if let Err(error) = result {
-        let _ = child.kill();
-        let _ = child.wait();
-        return Err(error.into());
-    }
-    *slot = Some(child);
-    Ok(())
+        .map_err(|_| "Cannot start private plugin".to_string())
+}
+
+#[cfg(target_os = "macos")]
+fn give_key(child: &mut Child, key: &[u8]) -> Result<(), String> {
+    let input = child.stdin.as_mut().ok_or("Missing private input")?;
+    let text = std::str::from_utf8(key).map_err(|_| "Invalid runtime key")?;
+    let mut data = serde_json::to_vec(&json!({"key":text})).map_err(|_| "Invalid runtime key")?;
+    data.push(b'\n');
+    // A small pipe write: it does not block.
+    input
+        .write_all(&data)
+        .map_err(|_| "Cannot start private plugin".to_string())
 }
 #[cfg(not(target_os = "macos"))]
 fn launch(_: &AppHandle) -> Result<(), String> {
@@ -188,6 +231,9 @@ pub async fn assistie_plugin_status(app: AppHandle) -> Result<PluginStatus, Stri
 #[specta::specta]
 pub async fn configure_assistie_plugin(app: AppHandle, key: String) -> Result<(), String> {
     root(&app)?;
+    if !super::assistie::terra_enabled(&app) {
+        return Err(super::assistie::TERRA_OFF.into());
+    }
     if !key.starts_with("sk-") || key.len() > 512 || key.chars().any(char::is_whitespace) {
         return Err("Use a dedicated runtime key with Tunnels Read and Use only".into());
     }
@@ -237,4 +283,148 @@ pub async fn ready_for_meetings(app: &AppHandle) -> bool {
                 )
         })
         .unwrap_or(false)
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc, Arc,
+    };
+    use std::time::Duration;
+
+    /// A stand-in supervisor: a process that runs until it is killed.
+    fn sleeper() -> Result<Child, String> {
+        Command::new("/bin/sleep")
+            .arg("30")
+            .stdin(Stdio::piped())
+            .spawn()
+            .map_err(|e| e.to_string())
+    }
+
+    fn no_key(_: &mut Child, _: &[u8]) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn reap(runtime: &PluginRuntime) {
+        if let Some(mut child) = runtime.0.lock().unwrap().take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+
+    /// Terra gate row 1: with the Experimental switch off, a launch (the saved-key resume at startup, a start or a
+    /// connect) reads no key and spawns nothing.
+    #[test]
+    fn terra_gate_row1_switch_off_launches_nothing() {
+        let runtime = PluginRuntime::new();
+        let read = std::cell::Cell::new(false);
+        let result = launch_with(
+            &runtime,
+            || false,
+            || {
+                read.set(true);
+                Ok(b"sk-fictional".to_vec())
+            },
+            || panic!("spawned a supervisor while Terra is off"),
+            no_key,
+        );
+        assert_eq!(result, Err(super::super::assistie::TERRA_OFF.to_string()));
+        assert!(!read.get(), "read the Keychain while Terra is off");
+        assert!(runtime.0.lock().unwrap().is_none());
+    }
+
+    /// Terra gate row 2: switch on, key saved: the supervisor starts as before and gets its key.
+    #[test]
+    fn terra_gate_row2_switch_on_launches_as_before() {
+        let runtime = PluginRuntime::new();
+        let handed = std::cell::Cell::new(false);
+        let result = launch_with(
+            &runtime,
+            || true,
+            || Ok(b"sk-fictional".to_vec()),
+            sleeper,
+            |_, key| {
+                handed.set(key == b"sk-fictional");
+                Ok(())
+            },
+        );
+        assert_eq!(result, Ok(()));
+        assert!(handed.get(), "the published supervisor never got its key");
+        assert!(
+            runtime.0.lock().unwrap().is_some(),
+            "no supervisor published"
+        );
+        reap(&runtime);
+    }
+
+    /// Terra gate row 7: the switch goes off while a launch waits on the Keychain prompt. When the read returns,
+    /// nothing is spawned.
+    #[test]
+    fn terra_gate_switch_off_during_a_blocked_keychain_read_spawns_nothing() {
+        let runtime = Arc::new(PluginRuntime::new());
+        let on = Arc::new(AtomicBool::new(true));
+        let spawned = Arc::new(AtomicBool::new(false));
+        let (entered, reading) = mpsc::channel();
+        let (release, released) = mpsc::channel::<()>();
+        let launcher = {
+            let (runtime, on, spawned) = (runtime.clone(), on.clone(), spawned.clone());
+            std::thread::spawn(move || {
+                launch_with(
+                    &runtime,
+                    move || on.load(Ordering::Acquire),
+                    move || {
+                        entered.send(()).unwrap();
+                        let _ = released.recv();
+                        Ok(b"sk-fictional".to_vec())
+                    },
+                    move || {
+                        spawned.store(true, Ordering::Release);
+                        sleeper()
+                    },
+                    no_key,
+                )
+            })
+        };
+        reading.recv_timeout(Duration::from_secs(5)).unwrap();
+        on.store(false, Ordering::Release); // the switch is saved as off while the prompt is up
+        release.send(()).unwrap();
+        let result = launcher.join().unwrap();
+        assert!(
+            !spawned.load(Ordering::Acquire),
+            "spawned a supervisor after the switch went off"
+        );
+        assert_eq!(result, Err(super::super::assistie::TERRA_OFF.to_string()));
+        runtime.shutdown(); // the cleanup's step, after the launch let go of the lock
+        assert!(runtime.0.lock().unwrap().is_none());
+    }
+
+    /// Terra gate row 7b: the switch goes off after both checks passed, while the supervisor is being spawned. It
+    /// never gets the key and is stopped, not published.
+    #[test]
+    fn terra_gate_switch_off_during_the_spawn_never_publishes() {
+        let runtime = PluginRuntime::new();
+        let checks = std::cell::Cell::new(0);
+        let result = launch_with(
+            &runtime,
+            || {
+                checks.set(checks.get() + 1);
+                checks.get() <= 2 // on for the two checks before the spawn, off after it
+            },
+            || Ok(b"sk-fictional".to_vec()),
+            sleeper,
+            |_, _| panic!("handed the key to a supervisor after the switch went off"),
+        );
+        assert_eq!(
+            checks.get(),
+            3,
+            "the switch was not checked after the spawn"
+        );
+        assert_eq!(result, Err(super::super::assistie::TERRA_OFF.to_string()));
+        assert!(
+            runtime.0.lock().unwrap().is_none(),
+            "published a supervisor after the switch went off"
+        );
+    }
 }

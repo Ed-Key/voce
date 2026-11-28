@@ -17,6 +17,7 @@ import VoceWordmark from "./icons/VoceWordmark";
 import ModelSelector from "./model-selector";
 import UpdateChecker from "./update-checker";
 import { useSettings } from "../hooks/useSettings";
+import { terraOn } from "./calls/terraGate";
 import {
   GeneralSettings,
   AdvancedSettings,
@@ -59,7 +60,8 @@ export const SECTIONS_CONFIG = {
     labelKey: "memory.sidebar",
     icon: Box,
     component: MemoryPage,
-    enabled: () => true,
+    // Terra's memory: experimental, like the rest of Terra.
+    enabled: (settings) => terraOn(settings),
     block: 0,
   },
   history: {

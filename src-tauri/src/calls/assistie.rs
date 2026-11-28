@@ -185,7 +185,7 @@ pub async fn memory_command(
     if !["list", "add", "approve", "reject", "delete", "edit"].contains(&command.as_str()) {
         return Err("Unknown memory command".into());
     }
-    let (bridge, _guard) = locked_bridge(&app).await?;
+    let (bridge, _guard) = locked_bridge(&app, Gate::On).await?;
     let root = bridge.root.clone();
     tauri::async_runtime::spawn_blocking(move || memory_exchange(&root, &command, &payload))
         .await
@@ -206,7 +206,44 @@ async fn raw(
     .map_err(|e| e.to_string())?
 }
 
-async fn locked_bridge(app: &AppHandle) -> Result<(AssistieBridge, OwnedMutexGuard<bool>), String> {
+/// Terra is experimental: nothing starts unless Settings > Advanced > Experimental features is on.
+pub fn terra_enabled(app: &AppHandle) -> bool {
+    crate::settings::get_settings(app).experimental_enabled
+}
+
+pub const TERRA_OFF: &str =
+    "Terra is an experimental feature. Turn on Experimental features in Settings > Advanced.";
+
+/// What a bridge caller is about to do. Starting, using or sharing Terra needs the switch on; ending it,
+/// cleanup and reads of what is already saved never do, so revoking can never be blocked.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Gate {
+    On,
+    Always,
+}
+
+fn permitted(gate: Gate, enabled: bool) -> Result<(), String> {
+    if gate == Gate::On && !enabled {
+        return Err(TERRA_OFF.into());
+    }
+    Ok(())
+}
+
+/// Ending a run, or switching its sharing off, is revocation; every other bridge change uses Terra.
+fn gate_for(command: &str, value: &Value) -> Gate {
+    match command {
+        "stop" => Gate::Always,
+        "controls" if value["sharing"] == json!(false) => Gate::Always,
+        _ => Gate::On,
+    }
+}
+
+/// The switch is read after the bridge lock is taken: the switch-off cleanup holds the same lock, so a command
+/// that was already waiting cannot start Terra again after it.
+async fn locked_bridge(
+    app: &AppHandle,
+    gate: Gate,
+) -> Result<(AssistieBridge, OwnedMutexGuard<bool>), String> {
     let bridge = app
         .try_state::<AssistieBridge>()
         .ok_or("Meeting bridge unavailable")?
@@ -221,16 +258,17 @@ async fn locked_bridge(app: &AppHandle) -> Result<(AssistieBridge, OwnedMutexGua
         raw(&bridge, "recover", None, json!({})).await?;
         *guard = true;
     }
+    permitted(gate, terra_enabled(app))?;
     Ok((bridge, guard))
 }
 
 pub async fn recover(app: &AppHandle) -> Result<(), String> {
-    let _ = locked_bridge(app).await?;
+    let _ = locked_bridge(app, Gate::Always).await?;
     Ok(())
 }
 
 pub(super) async fn stop_for_call(app: &AppHandle, call_id: String) -> Result<(), String> {
-    let (bridge, _guard) = locked_bridge(app).await?;
+    let (bridge, _guard) = locked_bridge(app, Gate::Always).await?;
     let result = raw(&bridge, "stop_call", None, json!({"call_id":call_id})).await?;
     if result["status"] != "no_matching_call" {
         // The bridge answers a stopped call with that run's snapshot.
@@ -239,6 +277,132 @@ pub(super) async fn stop_for_call(app: &AppHandle, call_id: String) -> Result<()
     }
     Ok(())
 }
+
+/// The Experimental switch changed; the new value is already saved, so every gate sees it. Every off runs its
+/// cleanup, even when the switch is back on by the time it runs (a quick off then on still ends the meeting's
+/// share, which then needs fresh consent). On resumes a saved plugin connection, as startup does, only if the
+/// switch is still on; nothing shares until Terra is turned on for a meeting. A quick off then on can find the old
+/// supervisor still alive (so its resume does nothing) and then lose it to the off's cleanup, so the cleanup
+/// resumes once more at its end if the switch is on by then.
+pub fn experimental_switched(app: AppHandle, enabled: bool) {
+    if enabled {
+        if terra_enabled(&app) {
+            super::plugin::resume_saved(&app);
+        }
+        return;
+    }
+    tauri::async_runtime::spawn(async move {
+        let errors = off_then_resume(
+            || switch_off(&app),
+            || terra_enabled(&app),
+            || super::plugin::resume_saved(&app),
+        )
+        .await;
+        for error in errors {
+            log::warn!("Turning Terra off: {error}");
+        }
+    });
+}
+
+/// Runs the switch-off cleanup, then resumes the saved connection if the switch is on by the time it ends.
+async fn off_then_resume<C, F>(
+    cleanup: C,
+    enabled: impl Fn() -> bool,
+    resume: impl FnOnce(),
+) -> Vec<String>
+where
+    C: FnOnce() -> F,
+    F: std::future::Future<Output = Vec<String>>,
+{
+    let errors = cleanup().await;
+    if enabled() {
+        resume();
+    }
+    errors
+}
+
+async fn switch_off(app: &AppHandle) -> Vec<String> {
+    let bridge = locked_bridge(app, Gate::Always).await;
+    end_terra(
+        || async {
+            // The guard lives to the end of this step, so no connect can launch a responder between the stop
+            // and the shutdown below. The responder is shut down even when the bridge or the stop failed.
+            let stopped = match &bridge {
+                Ok((bridge, _guard)) => stop_current(app, bridge).await,
+                Err(error) => Err(error.clone()),
+            };
+            let app = app.clone();
+            let shutdown = tauri::async_runtime::spawn_blocking(move || {
+                if let Some(runtime) = app.try_state::<super::responder::TerraRuntime>() {
+                    runtime.shutdown();
+                }
+            })
+            .await
+            .map_err(|e| e.to_string());
+            drop(bridge);
+            stopped.and(shutdown)
+        },
+        || async {
+            super::notch::set_assistie_notch_visible(app.clone(), false)
+                .await
+                .map(|_| ())
+        },
+        || async {
+            // Last, because a launch holds the plugin lock while it waits on the Keychain prompt; that launch
+            // refuses once the read returns, since the switch is already saved as off.
+            let app = app.clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                if let Some(runtime) = app.try_state::<super::plugin::PluginRuntime>() {
+                    runtime.shutdown();
+                }
+            })
+            .await
+            .map_err(|e| e.to_string())
+        },
+    )
+    .await
+}
+
+async fn stop_current(app: &AppHandle, bridge: &AssistieBridge) -> Result<(), String> {
+    // `identity`, never `current`: a snapshot syncs fresh meeting text into the shared store, and revocation must
+    // not share anything new first (the same rule as `mutate`). No run is nothing to stop; stop is idempotent.
+    let current = raw(bridge, "identity", None, json!({})).await?;
+    let Some(run_id) = current["run_id"].as_str() else {
+        return Ok(());
+    };
+    let stopped = snapshot(bridge, "stop", Some(run_id.to_string()), json!({})).await?;
+    let _ = app.emit("assistie-fixture-changed", &stopped);
+    Ok(())
+}
+
+/// Every step is tried even when an earlier one fails: the switch is already saved as off, so a failed bridge
+/// stop must not leave the responder, the notch or the tunnel running. Returns the errors, in order.
+async fn end_terra<A, B, C, FA, FB, FC>(
+    stop_and_responder: A,
+    hide_notch: B,
+    stop_plugin: C,
+) -> Vec<String>
+where
+    A: FnOnce() -> FA,
+    B: FnOnce() -> FB,
+    C: FnOnce() -> FC,
+    FA: std::future::Future<Output = Result<(), String>>,
+    FB: std::future::Future<Output = Result<(), String>>,
+    FC: std::future::Future<Output = Result<(), String>>,
+{
+    let mut errors = Vec::new();
+    for result in [
+        stop_and_responder().await,
+        hide_notch().await,
+        stop_plugin().await,
+    ] {
+        if let Err(error) = result {
+            errors.push(error);
+        }
+    }
+    errors
+}
+
 #[derive(Serialize, Deserialize, specta::Type)]
 pub struct Source {
     id: String,
@@ -402,7 +566,11 @@ async fn snapshot(
 }
 
 pub async fn notch_allowed(app: &AppHandle) -> Result<bool, String> {
-    let (bridge, _guard) = locked_bridge(app).await?;
+    // `current` syncs meeting text, so it is never read while Terra is off: off simply means no notch.
+    let (bridge, _guard) = match locked_bridge(app, Gate::On).await {
+        Err(error) if error == TERRA_OFF => return Ok(false),
+        other => other?,
+    };
     Ok(snapshot(&bridge, "current", None, json!({}))
         .await?
         .allows_notch())
@@ -422,7 +590,7 @@ where
 #[tauri::command]
 #[specta::specta]
 pub async fn create_assistie_fixture(app: AppHandle) -> Result<Snapshot, String> {
-    let (bridge, _guard) = locked_bridge(&app).await?;
+    let (bridge, _guard) = locked_bridge(&app, Gate::On).await?;
     let result = create_session(&bridge, || {
         super::notch::set_assistie_notch_visible(app.clone(), false)
     })
@@ -434,7 +602,7 @@ pub async fn create_assistie_fixture(app: AppHandle) -> Result<Snapshot, String>
 #[tauri::command]
 #[specta::specta]
 pub async fn create_call_assistie(app: AppHandle, session_id: String) -> Result<Snapshot, String> {
-    let (bridge, _guard) = locked_bridge(&app).await?;
+    let (bridge, _guard) = locked_bridge(&app, Gate::On).await?;
     if app
         .state::<super::CallNotesManager>()
         .active_session_id()
@@ -462,7 +630,7 @@ pub async fn create_call_assistie(app: AppHandle, session_id: String) -> Result<
 #[tauri::command]
 #[specta::specta]
 pub async fn copy_assistie_connection(app: AppHandle, run_id: String) -> Result<(), String> {
-    let (bridge, _guard) = locked_bridge(&app).await?;
+    let (bridge, _guard) = locked_bridge(&app, Gate::On).await?;
     let result = raw(&bridge, "handoff", Some(run_id), json!({})).await?;
     let prompt = result["prompt"]
         .as_str()
@@ -508,7 +676,7 @@ pub async fn connect_terra_meeting(
     proactive: bool,
 ) -> Result<Snapshot, String> {
     // Only the consent form calls this. The bridge owns the route; Handy only starts the process.
-    let (bridge, _guard) = locked_bridge(&app).await?;
+    let (bridge, _guard) = locked_bridge(&app, Gate::On).await?;
     let current = raw(&bridge, "identity", None, json!({})).await?;
     if current["run_id"].as_str() != Some(&run_id) {
         return Err("Meeting changed; reopen its current controls".into());
@@ -518,6 +686,9 @@ pub async fn connect_terra_meeting(
     tauri::async_runtime::spawn_blocking(move || memory_exchange(&root, "check", "{}"))
         .await
         .map_err(|e| e.to_string())??;
+    // The last check before sharing turns on: the identity read and the memory check above both await, and the
+    // switch may have gone off meanwhile (its cleanup waits behind this lock).
+    permitted(Gate::On, terra_enabled(&app))?;
     let value = raw(
         &bridge,
         "connect_codex",
@@ -533,6 +704,13 @@ pub async fn connect_terra_meeting(
     if !matches!(super::notch::show_for_share(app.clone()).await, Ok(true)) {
         let _ = raw(&bridge, "stop", Some(run_id), json!({})).await;
         return Err("Terra needs the notch to be visible".into());
+    }
+    // The switch may have gone off while this connect held the lock; its cleanup is waiting behind it. Checked
+    // again right before the launch so no responder starts for it.
+    if !terra_enabled(&app) {
+        let _ = raw(&bridge, "stop", Some(run_id), json!({})).await;
+        let _ = super::notch::set_assistie_notch_visible(app.clone(), false).await;
+        return Err(TERRA_OFF.into());
     }
     let launched = {
         let app = app.clone();
@@ -590,7 +768,7 @@ pub async fn saved_call_assistie(
     session_id: String,
     offset: u32,
 ) -> Result<Snapshot, String> {
-    let (bridge, _guard) = locked_bridge(&app).await?;
+    let (bridge, _guard) = locked_bridge(&app, Gate::Always).await?;
     snapshot(
         &bridge,
         "call_history",
@@ -606,7 +784,8 @@ pub async fn assistie_fixture_snapshot(
     app: AppHandle,
     run_id: Option<String>,
 ) -> Result<Snapshot, String> {
-    let (bridge, _guard) = locked_bridge(&app).await?;
+    // `current` and `snapshot` sync fresh meeting text into the shared store: refused while Terra is off.
+    let (bridge, _guard) = locked_bridge(&app, Gate::On).await?;
     let current = snapshot(&bridge, "current", None, json!({})).await?;
     if current.allows_notch() {
         super::notch::notch_run_live();
@@ -628,12 +807,16 @@ async fn mutate(
     value: Value,
     hide: bool,
 ) -> Result<Snapshot, String> {
-    let (bridge, _guard) = locked_bridge(&app).await?;
+    let gate = gate_for(command, &value);
+    let (bridge, _guard) = locked_bridge(&app, gate).await?;
     // Revocation must not refresh or export new transcript text first.
     let current = raw(&bridge, "identity", None, json!({})).await?;
     if current["run_id"].as_str() != Some(&run_id) {
         return Err("Meeting changed; reopen its current controls".into());
     }
+    // The identity read awaits, and the switch may have gone off meanwhile (its cleanup waits behind this lock):
+    // checked again right before a command that can sync meeting text.
+    permitted(gate, terra_enabled(&app))?;
     let result = snapshot(&bridge, command, Some(run_id), value).await?;
     if hide {
         super::notch::hide_after_saved(app.clone(), &result.run_id);
@@ -658,7 +841,7 @@ pub async fn assistie_notch_feed(
     after: Option<u32>,
     limit: u32,
 ) -> Result<FeedPage, String> {
-    let (bridge, _guard) = locked_bridge(&app).await?;
+    let (bridge, _guard) = locked_bridge(&app, Gate::Always).await?;
     let value = raw(
         &bridge,
         "feed",
@@ -1070,5 +1253,157 @@ mod tests {
         let snapshot: Snapshot = serde_json::from_value(value).unwrap();
         assert!(!snapshot.allows_notch());
         assert!(!snapshot.proactive);
+    }
+
+    /// Terra gate rows 3 and 4: starting or using Terra needs the Experimental switch; revoking never does.
+    #[test]
+    fn terra_gate_rows3_4_only_use_needs_the_switch() {
+        assert_eq!(permitted(Gate::On, false), Err(TERRA_OFF.to_string()));
+        assert_eq!(permitted(Gate::On, true), Ok(()));
+        assert_eq!(permitted(Gate::Always, false), Ok(()));
+        assert_eq!(gate_for("stop", &json!({})), Gate::Always);
+        assert_eq!(
+            gate_for("controls", &json!({"sharing":false,"proactive":false})),
+            Gate::Always
+        );
+        assert_eq!(
+            gate_for("controls", &json!({"sharing":true,"proactive":false})),
+            Gate::On
+        );
+        for used in ["ask", "transcript", "connect", "retry_connect", "rate"] {
+            assert_eq!(gate_for(used, &json!({})), Gate::On, "{used}");
+        }
+    }
+
+    /// Terra gate row 3: every way into the bridge names its gate, and the list below is the decision for each.
+    /// A new caller fails this test until it is added here on purpose.
+    #[test]
+    fn terra_gate_row3_every_bridge_caller_has_the_intended_gate() {
+        let expected = [
+            ("memory_command", "Gate::On"),
+            ("recover", "Gate::Always"),
+            ("stop_for_call", "Gate::Always"),
+            ("switch_off", "Gate::Always"),
+            ("notch_allowed", "Gate::On"),
+            ("create_assistie_fixture", "Gate::On"),
+            ("create_call_assistie", "Gate::On"),
+            ("copy_assistie_connection", "Gate::On"),
+            ("connect_terra_meeting", "Gate::On"),
+            ("saved_call_assistie", "Gate::Always"),
+            ("assistie_fixture_snapshot", "Gate::On"),
+            ("mutate", "gate"),
+            ("assistie_notch_feed", "Gate::Always"),
+        ];
+        let source = include_str!("assistie.rs");
+        let source = &source[..source.find("#[cfg(test)]").unwrap()];
+        let mut found = Vec::new();
+        let mut current = "";
+        for line in source.lines() {
+            let trimmed = line.trim_start();
+            for prefix in [
+                "pub async fn ",
+                "async fn ",
+                "pub(super) async fn ",
+                "pub fn ",
+                "fn ",
+            ] {
+                if let Some(rest) = trimmed.strip_prefix(prefix) {
+                    current = &rest[..rest.find(['(', '<']).unwrap()];
+                }
+            }
+            if let Some(at) = line.find("locked_bridge(") {
+                if current == "locked_bridge" {
+                    continue;
+                }
+                let args = &line[at + "locked_bridge(".len()..];
+                let gate = args.split_once(", ").unwrap().1;
+                found.push((
+                    current.to_string(),
+                    gate[..gate.rfind(')').unwrap()].to_string(),
+                ));
+            }
+        }
+        let expected: Vec<_> = expected
+            .iter()
+            .map(|(f, g)| (f.to_string(), g.to_string()))
+            .collect();
+        assert_eq!(found, expected);
+    }
+
+    /// Terra gate rows 5 and 6: switching off tries every step in order, even when the bridge stop fails, and
+    /// reports what failed.
+    #[tokio::test]
+    async fn terra_gate_rows5_6_switch_off_tries_every_step() {
+        let steps = std::sync::Mutex::new(Vec::new());
+        let errors = end_terra(
+            || async {
+                steps.lock().unwrap().push("stop and responder");
+                Err("bridge unavailable".to_string())
+            },
+            || async {
+                steps.lock().unwrap().push("hide notch");
+                Ok(())
+            },
+            || async {
+                steps.lock().unwrap().push("stop plugin");
+                Ok(())
+            },
+        )
+        .await;
+        assert_eq!(
+            *steps.lock().unwrap(),
+            ["stop and responder", "hide notch", "stop plugin"]
+        );
+        assert_eq!(errors, ["bridge unavailable"]);
+        let quiet = end_terra(
+            || async { Ok(()) },
+            || async { Ok(()) },
+            || async { Ok(()) },
+        )
+        .await;
+        assert!(quiet.is_empty());
+    }
+
+    /// Codex review 1, finding 2: a quick off then on. The on's resume finds the old supervisor alive and does
+    /// nothing, then the off's cleanup stops it; the cleanup resumes once more when the switch is on by its end,
+    /// and not when it stays off, even when a step failed.
+    #[tokio::test]
+    async fn terra_gate_quick_off_then_on_resumes_after_the_cleanup() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let on = AtomicBool::new(false);
+        let resumed = AtomicBool::new(false);
+        let errors = off_then_resume(
+            || async {
+                on.store(true, Ordering::Release); // switched back on while the cleanup runs
+                vec!["bridge unavailable".to_string()]
+            },
+            || on.load(Ordering::Acquire),
+            || resumed.store(true, Ordering::Release),
+        )
+        .await;
+        assert!(resumed.load(Ordering::Acquire), "the tunnel stayed stopped");
+        assert_eq!(errors, ["bridge unavailable"]);
+        on.store(false, Ordering::Release);
+        resumed.store(false, Ordering::Release);
+        off_then_resume(
+            || async { Vec::new() },
+            || on.load(Ordering::Acquire),
+            || resumed.store(true, Ordering::Release),
+        )
+        .await;
+        assert!(!resumed.load(Ordering::Acquire), "resumed while off");
+    }
+
+    /// Codex review 1, finding 1: `mutate` checks the switch again after its `identity` read (which awaits) and
+    /// before the command, which can sync meeting text. The recheck needs an app handle, so this pins its place.
+    #[test]
+    fn terra_gate_mutate_rechecks_after_identity() {
+        let source = include_str!("assistie.rs");
+        let body = &source[source.find("\nasync fn mutate(").unwrap()..];
+        let body = &body[..body.find("\n}\n").unwrap()];
+        let identity = body.find(r#"raw(&bridge, "identity""#).unwrap();
+        let recheck = body.find("permitted(gate, terra_enabled(&app))?;").unwrap();
+        let command = body.find("snapshot(&bridge, command").unwrap();
+        assert!(identity < recheck && recheck < command);
     }
 }

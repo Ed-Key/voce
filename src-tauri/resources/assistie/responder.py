@@ -1,7 +1,8 @@
 """Local Terra responder: one warm codex app-server session following one consented meeting.
 
 Handy starts it after consent with: responder.py ROOT RUN_ID CONNECTION_ID, stdin a pipe that
-closes when Handy exits. It talks to the meeting only through bridge.py (wait, reply, pass, stop),
+closes when Handy exits. It does nothing until Handy writes "go" on that pipe, which Handy does only after its last
+check that Terra is still allowed (the Experimental switch); without it, it exits at once. It talks to the meeting only through bridge.py (wait, reply, pass, stop),
 so the bridge stays the authority on what the notch shows. Hold-then-release and the turn rules
 follow the consented route contract. The log holds timings and event shapes, never text.
 """
@@ -722,7 +723,22 @@ def wait_for_parent(descriptor=0):
         pass
 
 
+def wait_for_go(descriptor=0):
+    """True once Handy writes "go\\n"; False when the pipe closes first (Handy refused this launch). Raw reads, for
+    the same reason as `wait_for_parent`."""
+    line = b""
+    while not line.endswith(b"\n") and len(line) < 16:
+        byte = os.read(descriptor, 1)
+        if not byte:
+            return False
+        line += byte
+    return line == b"go\n"
+
+
 def main():
+    # Nothing (no bridge read, no memory, no codex) before Handy's go: a refused launch starts no work.
+    if not wait_for_go():
+        return
     root, run_id, token = Path(sys.argv[1]), sys.argv[2], sys.argv[3]
     bridge = load_bridge(root)
     folder = bridge.checked_folder(root, run_id)
