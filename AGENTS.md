@@ -39,3 +39,4 @@ Regenerate `src/bindings.ts` after changing Tauri commands or settings: run a de
 - Behavior with timing or lifecycle (overlay, meeting prompt, early cleanup, recording) gets one test per row of an event and state table.
 - Never commit personal data, recordings, transcripts or machine-specific paths.
 - Commits use conventional prefixes (`feat:`, `fix:`, `docs:`, `chore:`) and explain why.
+- A branch built in its own worktree with its own `CARGO_TARGET_DIR` (5-13 GB each) must delete that target directory in the same step that merges the branch or removes the worktree. Nothing removes it automatically, and skipped deletions have filled the disk.
