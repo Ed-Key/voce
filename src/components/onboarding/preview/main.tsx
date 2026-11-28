@@ -169,7 +169,8 @@ const fake: OnboardingApi = {
     tryCb = cb;
     return () => {};
   },
-  appleState: async () => "unsupported",
+  // "apple": a Mac that runs Apple Intelligence, with it saved.
+  appleState: async () => (state === "apple" ? "ready" : "unsupported"),
   getNamesEnabled: async () => true,
   setNamesEnabled: noop,
   getStorage: async () => ({
