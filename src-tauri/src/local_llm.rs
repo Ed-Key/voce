@@ -351,7 +351,12 @@ impl Sidecar {
                 .spawn()
                 .map_err(|e| format!("spawn failed: {e}"))?;
             if let Some(pid_file) = self.pid_file() {
-                let _ = std::fs::write(pid_file, child.id().to_string());
+                // Without a start time the next launch never kills it.
+                let record = match ps_field(child.id(), "lstart=") {
+                    Some(start) => format!("{}\n{start}", child.id()),
+                    None => child.id().to_string(),
+                };
+                let _ = std::fs::write(pid_file, record);
             }
             state.child = Some(child);
             state.port = port;
@@ -407,7 +412,7 @@ impl Sidecar {
         };
         let ours = std::fs::read_to_string(&pid_file)
             .ok()
-            .and_then(|s| s.trim().parse::<u32>().ok())
+            .and_then(|s| recorded_pid(&s))
             == Some(pid);
         if ours {
             let _ = std::fs::remove_file(pid_file);
@@ -471,26 +476,26 @@ impl Sidecar {
         }
     }
 
-    /// A server a crashed Voce left running holds RAM until killed.
+    /// A server a crashed Voce left running holds RAM until killed. It is
+    /// killed only when the process at the recorded pid has the recorded
+    /// start time and runs Voce's model (`-m <its path in Voce's data
+    /// folder>`): after a crash the pid can belong to any process by now,
+    /// another app's llama-server included. A pid file without a start time
+    /// (an older build's) is dropped and nothing is killed.
     fn kill_leftover(&self) {
         let Some(pid_file) = self.pid_file() else {
             return;
         };
-        let Some(pid) = std::fs::read_to_string(&pid_file)
-            .ok()
-            .and_then(|s| s.trim().parse::<u32>().ok())
-        else {
+        let Ok(record) = std::fs::read_to_string(&pid_file) else {
             return;
         };
-        let is_server = Command::new("ps")
-            .args(["-p", &pid.to_string(), "-o", "comm="])
-            .output()
-            .is_ok_and(|o| {
-                String::from_utf8_lossy(&o.stdout)
-                    .trim()
-                    .ends_with("llama-server")
-            });
-        if is_server {
+        let start = record.split_once('\n').map(|(_, start)| start.trim());
+        let model = format!("-m {}", self.model.to_string_lossy());
+        let leftover = recorded_pid(&record).filter(|&pid| {
+            start.is_some_and(|s| !s.is_empty() && ps_field(pid, "lstart=").as_deref() == Some(s))
+                && ps_field(pid, "command=").is_some_and(|c| c.contains(&model))
+        });
+        if let Some(pid) = leftover {
             warn!("Killing a cleanup server left from an earlier run");
             let _ = Command::new("kill").arg(pid.to_string()).status();
         }
@@ -601,6 +606,22 @@ fn file_matches(path: &Path, size: u64, sha256: &str) -> bool {
     }
     format!("{:x}", hasher.finalize()) == sha256
 }
+/// The pid on the first line of the pid file.
+fn recorded_pid(record: &str) -> Option<u32> {
+    record.lines().next()?.trim().parse().ok()
+}
+
+/// One `ps` field of a running process: `lstart=` (its start time, which
+/// tells it from a later process with the same pid) or `command=`.
+fn ps_field(pid: u32, field: &str) -> Option<String> {
+    let out = Command::new("ps")
+        .args(["-p", &pid.to_string(), "-o", field])
+        .output()
+        .ok()?;
+    let value = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (out.status.success() && !value.is_empty()).then_some(value)
+}
+
 static DOWNLOAD: Mutex<Option<CancellationToken>> = Mutex::new(None);
 
 /// The running s1-mini download's claim on `DOWNLOAD`, released when it
@@ -1270,6 +1291,49 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
         migrate_model_checked(&old, &new, 4, &sha(b"gguf"));
         assert!(!model_path(&old).exists());
         assert_eq!(std::fs::read(model_path(&new)).unwrap(), b"gguf");
+    }
+
+    /// Finding 6: after a crash the recorded pid can belong to another
+    /// app's llama-server; it survives, and Voce's own leftover is killed.
+    #[tokio::test]
+    async fn review8_a_reused_pid_never_kills_an_unrelated_llama_server() {
+        let dir = temp_dir("reusedpid");
+        let pid_file = dir.join("cleanup-server.pid");
+        let other_bin = dir.join("llama-server");
+        std::os::unix::fs::symlink("/bin/sleep", &other_bin).unwrap();
+        let mut other = Command::new(&other_bin).arg("30").spawn().unwrap();
+        std::thread::sleep(Duration::from_millis(100));
+        let alive = |child: &mut std::process::Child| child.try_wait().unwrap().is_none();
+        let launch = || Sidecar::new(None, with_model(&dir), Some(dir.clone())).kill_leftover();
+        // A crashed Voce's server had this pid with another start time; an
+        // older build's file has none; the right start time but another
+        // model is not Voce's server either.
+        let start = ps_field(other.id(), "lstart=").unwrap();
+        for stale in [
+            format!("{}\nThu Jan  1 00:00:00 2026", other.id()),
+            other.id().to_string(),
+            format!("{}\n{start}", other.id()),
+        ] {
+            std::fs::write(&pid_file, stale).unwrap();
+            launch();
+            assert!(alive(&mut other), "the unrelated llama-server survives");
+            assert!(!pid_file.exists());
+        }
+        other.kill().unwrap();
+        let _ = other.wait();
+
+        // Voce's own server left behind by a crash (never retired) goes.
+        let sidecar = Sidecar::new(
+            Some(fake_server(&dir, "healthy")),
+            with_model(&dir),
+            Some(dir.clone()),
+        );
+        drop(sidecar.ensure(None, false).await.unwrap());
+        let mut ours = sidecar.lock().child.take().unwrap();
+        launch();
+        std::thread::sleep(Duration::from_millis(300));
+        assert!(!alive(&mut ours), "Voce's leftover server is killed");
+        assert!(!pid_file.exists());
     }
 
     /// Finding 5: a download whose folder cannot be made leaves the slot
