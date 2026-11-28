@@ -603,6 +603,30 @@ fn file_matches(path: &Path, size: u64, sha256: &str) -> bool {
 }
 static DOWNLOAD: Mutex<Option<CancellationToken>> = Mutex::new(None);
 
+/// The running s1-mini download's claim on `DOWNLOAD`, released when it
+/// drops, so every exit (an error, a cancel, a dropped command) frees the
+/// slot and Retry never reads "already downloading" for a finished attempt.
+struct DownloadSlot(CancellationToken);
+
+impl Drop for DownloadSlot {
+    fn drop(&mut self) {
+        DOWNLOAD.lock().unwrap_or_else(|p| p.into_inner()).take();
+    }
+}
+
+/// Prepare the folder, then claim the slot: a preparation that fails
+/// claims nothing.
+fn begin_download(dir: &Path) -> Result<DownloadSlot, String> {
+    let mut slot = DOWNLOAD.lock().unwrap_or_else(|p| p.into_inner());
+    if slot.is_some() {
+        return Err("already downloading".into());
+    }
+    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    let token = CancellationToken::new();
+    *slot = Some(token.clone());
+    Ok(DownloadSlot(token))
+}
+
 /// Startup: remember the folders, kill a leftover server, start the reaper.
 pub fn init(app: &tauri::AppHandle) {
     let Ok(data) = crate::portable::app_data_dir(app) else {
@@ -694,16 +718,7 @@ pub async fn download_voce_cleanup_model(app: tauri::AppHandle) -> Result<bool, 
         start_warm(app);
         return Ok(true);
     }
-    let token = {
-        let mut slot = DOWNLOAD.lock().unwrap_or_else(|p| p.into_inner());
-        if slot.is_some() {
-            return Err("already downloading".into());
-        }
-        let token = CancellationToken::new();
-        *slot = Some(token.clone());
-        token
-    };
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let slot = begin_download(&dir)?;
     let result = ModelManager::download_url_resumable(
         &app,
         MODEL_PROGRESS_ID,
@@ -711,10 +726,10 @@ pub async fn download_voce_cleanup_model(app: tauri::AppHandle) -> Result<bool, 
         &partial_path(&dir),
         Some(MODEL_BYTES),
         Some(MODEL_SHA256),
-        &token,
+        &slot.0,
     )
     .await;
-    DOWNLOAD.lock().unwrap_or_else(|p| p.into_inner()).take();
+    drop(slot);
     match result.map_err(|e| e.to_string())? {
         HttpDownloadOutcome::Cancelled => Ok(false),
         HttpDownloadOutcome::Completed => {
@@ -1255,6 +1270,26 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
         migrate_model_checked(&old, &new, 4, &sha(b"gguf"));
         assert!(!model_path(&old).exists());
         assert_eq!(std::fs::read(model_path(&new)).unwrap(), b"gguf");
+    }
+
+    /// Finding 5: a download whose folder cannot be made leaves the slot
+    /// free, so Retry after fixing the folder starts a download.
+    #[test]
+    fn review8_a_failed_download_preparation_never_holds_the_slot() {
+        let dir = temp_dir("slot");
+        let blocker = dir.join("not-a-folder");
+        std::fs::write(&blocker, b"").unwrap();
+        let downloading = || DOWNLOAD.lock().unwrap().is_some();
+        assert!(begin_download(&blocker.join("cleanup")).is_err());
+        assert!(!downloading(), "the failed attempt claimed nothing");
+        let slot = begin_download(&dir.join("cleanup")).expect("Retry starts");
+        assert!(downloading());
+        assert_eq!(
+            begin_download(&dir.join("cleanup")).err().as_deref(),
+            Some("already downloading")
+        );
+        drop(slot);
+        assert!(!downloading(), "every exit frees the slot");
     }
 
     #[tokio::test]
