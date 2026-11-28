@@ -1197,13 +1197,13 @@ pub fn load_or_create_app_settings(app: &AppHandle) -> AppSettings {
 /// Row 16c: move cleanup keys from the settings to the Keychain. A key leaves
 /// the settings only after its Keychain write succeeded; a failed write keeps
 /// it there, so cleanup keeps working. Returns whether any key moved.
-fn keys_to_keychain(settings: &mut AppSettings) -> bool {
+fn keys_to_keychain(settings: &mut AppSettings, identifier: &str) -> bool {
     let mut moved = false;
     for (provider, key) in settings.post_process_api_keys.iter_mut() {
         if key.is_empty() {
             continue;
         }
-        match crate::keychain::set(provider, key) {
+        match crate::keychain::set(identifier, provider, key) {
             Ok(()) => {
                 key.clear();
                 moved = true;
@@ -1216,10 +1216,10 @@ fn keys_to_keychain(settings: &mut AppSettings) -> bool {
 }
 
 /// Fill every key the settings file does not hold from the Keychain.
-fn keys_from_keychain(settings: &mut AppSettings) {
+fn keys_from_keychain(settings: &mut AppSettings, identifier: &str) {
     for (provider, key) in settings.post_process_api_keys.iter_mut() {
         if key.is_empty() {
-            if let Some(stored) = crate::keychain::get(provider) {
+            if let Some(stored) = crate::keychain::get(identifier, provider) {
                 *key = stored;
             }
         }
@@ -1278,14 +1278,14 @@ pub fn get_settings(app: &AppHandle) -> AppSettings {
     let stored = store.get("settings");
     let (mut settings, mut updated) = settings_from_stored(stored.as_ref());
     if !KEYS_MIGRATED.swap(true, std::sync::atomic::Ordering::Relaxed)
-        && keys_to_keychain(&mut settings)
+        && keys_to_keychain(&mut settings, &app.config().identifier)
     {
         updated = true;
     }
     if updated {
         store.set("settings", serde_json::to_value(&settings).unwrap());
     }
-    keys_from_keychain(&mut settings);
+    keys_from_keychain(&mut settings, &app.config().identifier);
     settings
 }
 
@@ -1505,10 +1505,10 @@ pub fn write_settings(app: &AppHandle, settings: AppSettings) {
     // cleared by the user.
     for (provider, key) in settings.post_process_api_keys.iter() {
         if key.is_empty() {
-            crate::keychain::delete(provider);
+            crate::keychain::delete(&app.config().identifier, provider);
         }
     }
-    keys_to_keychain(&mut settings);
+    keys_to_keychain(&mut settings, &app.config().identifier);
     store.set("settings", serde_json::to_value(&settings).unwrap());
 }
 
@@ -2105,7 +2105,7 @@ mod onboarding_tests {
             .post_process_api_keys
             .insert("groq".into(), "gsk-test-stays".into());
 
-        assert!(keys_to_keychain(&mut settings));
+        assert!(keys_to_keychain(&mut settings, crate::APP_ID));
         // What the file keeps: the moved key is gone, the failed one stays.
         let file = serde_json::to_string(&settings).unwrap();
         assert!(!file.contains("sk-test-moves"));
@@ -2113,7 +2113,7 @@ mod onboarding_tests {
 
         // Read back as get_settings does: dictation still has the key.
         let mut read = settings.clone();
-        keys_from_keychain(&mut read);
+        keys_from_keychain(&mut read, crate::APP_ID);
         let target = crate::actions::post_process_target(&read).unwrap();
         assert_eq!(target.api_key, "sk-test-moves");
         assert_eq!(read.post_process_api_keys["groq"], "gsk-test-stays");
