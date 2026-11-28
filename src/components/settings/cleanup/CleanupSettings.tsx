@@ -98,7 +98,11 @@ const CleanupPage: React.FC<{ settings: Settings }> = ({ settings }) => {
     const configuredServer: LocalServer | null =
       savedProvider === "custom" && custom?.base_url
         ? {
-            kind: custom.base_url.includes(":11434") ? "ollama" : "lm_studio",
+            kind: custom.base_url.includes(":11434")
+              ? "ollama"
+              : custom.base_url.includes(":1234")
+                ? "lm_studio"
+                : "custom",
             baseUrl: custom.base_url,
             models: [settings.post_process_models?.custom ?? ""].filter(
               Boolean,
@@ -115,6 +119,14 @@ const CleanupPage: React.FC<{ settings: Settings }> = ({ settings }) => {
   keysRef.current = keys;
   const savedKey = useMemo(() => (id: string) => keysRef.current[id] ?? "", []);
   const c = useCleanupChooser({ ...opening, savedKey, active: wantOn });
+  // Offered whenever this Mac supports it, not only when it was saved.
+  const [appleAvailable, setAppleAvailable] = useState(false);
+  useEffect(() => {
+    api
+      .appleAvailable()
+      .then(setAppleAvailable)
+      .catch((e) => console.warn("Apple Intelligence availability:", e));
+  }, []);
 
   // Is this choice already what the settings hold?
   const isSaved = (choice: CleanupChoice) => {
@@ -308,7 +320,8 @@ const CleanupPage: React.FC<{ settings: Settings }> = ({ settings }) => {
             c={c}
             compact
             showOff={false}
-            showApple={opening.initial === "apple"}
+            showApple={appleAvailable || opening.initial === "apple"}
+            showCustom
           />
           <LiveTest c={c} canRerun arrowSize={14} off={off} />
         </div>
@@ -425,6 +438,11 @@ const Advanced: React.FC<AdvancedProps> = ({
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [replacing, setReplacing] = useState(false);
+  // A custom server is set up here: open the fields it needs.
+  const needsServer = c.opt === "local" && !c.choice();
+  useEffect(() => {
+    if (needsServer) setOpen(true);
+  }, [needsServer]);
   const pid = providerOf(c);
   // Voce cleanup and Apple Intelligence run on this Mac with no endpoint,
   // key or prompt to edit.

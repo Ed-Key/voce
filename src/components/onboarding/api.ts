@@ -41,7 +41,8 @@ export type S1Status = {
   secondsLeft?: number | null;
 };
 
-export type LocalServerKind = "lm_studio" | "ollama";
+/** "custom": an OpenAI-compatible server the user typed in (Settings). */
+export type LocalServerKind = "lm_studio" | "ollama" | "custom";
 export type LocalServer = {
   kind: LocalServerKind;
   baseUrl: string;
@@ -163,6 +164,8 @@ export interface OnboardingApi {
   /** Resolves within about 1 s; never blocks the screen. */
   detectLocalServers(): Promise<LocalServer[]>;
   openLocalServerApp(kind: LocalServerKind): Promise<void>;
+  /** Apple Intelligence can run on this Mac. */
+  appleAvailable(): Promise<boolean>;
   cloudProviders(): Promise<CloudProvider[]>;
   /** The provider's models, listed with the typed key (nothing saved). */
   listCloudModels(providerId: string, apiKey: string): Promise<string[]>;
@@ -371,6 +374,7 @@ const realApi: OnboardingApi = {
   },
   // TODO(backend): no command opens LM Studio or Ollama yet.
   openLocalServerApp: () => notWired("openLocalServerApp"),
+  appleAvailable: () => commands.checkAppleIntelligenceAvailable(),
 
   async cloudProviders() {
     const s = await settings();

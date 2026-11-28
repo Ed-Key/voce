@@ -227,7 +227,11 @@ const CALLS = [
   call("c14", "Call", 7, 14, 54, "0:09"),
 ];
 
-export function fixture(theme: string) {
+export function fixture(
+  theme: string,
+  /** The saved cleanup provider (default: a custom server). */
+  provider = "custom",
+) {
   const settings = {
     onboarding_completed: true,
     theme,
@@ -269,7 +273,7 @@ export function fixture(theme: string) {
     history_limit: 500,
     recording_retention_period: "days3",
     post_process_enabled: true,
-    post_process_provider_id: "custom",
+    post_process_provider_id: provider,
     post_process_providers: [
       {
         id: "custom",
@@ -330,6 +334,13 @@ export function fixture(theme: string) {
       gpu_devices: [],
     },
     fetch_post_process_models: ["s1-mini"],
+    detect_local_cleanup_servers: [],
+    check_apple_intelligence_available: true,
+    get_early_cleanup_state: {
+      enabled: true,
+      available: true,
+      effective: true,
+    },
     list_saved_calls: CALLS,
     call_detection_snapshot: {
       available: true,

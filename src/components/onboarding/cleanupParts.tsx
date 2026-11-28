@@ -408,11 +408,14 @@ export function useCleanupChooser({
       touch();
       setLocalModel(m);
     },
-    /** A new endpoint for the local server; its old test no longer counts. */
+    /** A new endpoint for the local server; its old test no longer counts.
+     *  With none detected or configured it becomes a custom server. */
     setServerBaseUrl: (baseUrl: string) => {
       reset();
       touch();
-      setServer((s) => (s ? { ...s, baseUrl } : s));
+      setServer((s) =>
+        s ? { ...s, baseUrl } : { kind: "custom", baseUrl, models: [] },
+      );
     },
     providers,
     provider,
@@ -489,9 +492,18 @@ export const CleanupOptions: React.FC<{
   c: Chooser;
   compact?: boolean;
   showOff?: boolean;
-  /** Settings, when Apple Intelligence is the saved choice. */
+  /** Settings, when this Mac supports Apple Intelligence. */
   showApple?: boolean;
-}> = ({ c, compact = false, showOff = true, showApple = false }) => {
+  /** Settings: a custom server is always offered, set under Advanced,
+   *  even when none was detected. */
+  showCustom?: boolean;
+}> = ({
+  c,
+  compact = false,
+  showOff = true,
+  showApple = false,
+  showCustom = false,
+}) => {
   const { t } = useTranslation();
   const { serverName } = useChoiceName(c);
   const [keyFocused, setKeyFocused] = useState(false);
@@ -577,26 +589,33 @@ export const CleanupOptions: React.FC<{
           )}
         </>,
       )}
-      {c.server &&
+      {(c.server || showCustom) &&
         row(
           "local",
           <>
             <div className="name">
-              {serverName}{" "}
-              <span className="badge found">
-                {t("onboarding.cleanup.found")}
-              </span>
-            </div>
-            <div className="desc">
-              {t(
-                compact
-                  ? "onboarding.cleanup.local.short"
-                  : "onboarding.cleanup.local.description",
-                { name: serverName },
+              {c.server ? serverName : t("onboarding.cleanup.servers.custom")}
+              {c.server && c.server.kind !== "custom" && (
+                <>
+                  {" "}
+                  <span className="badge found">
+                    {t("onboarding.cleanup.found")}
+                  </span>
+                </>
               )}
             </div>
+            <div className="desc">
+              {!c.server || c.server.kind === "custom"
+                ? t("onboarding.cleanup.custom.short")
+                : t(
+                    compact
+                      ? "onboarding.cleanup.local.short"
+                      : "onboarding.cleanup.local.description",
+                    { name: serverName },
+                  )}
+            </div>
             {/* Settings sets the model under Advanced. */}
-            {!compact && c.opt === "local" && c.server.models.length > 0 && (
+            {!compact && c.opt === "local" && !!c.server?.models.length && (
               <div className="fields" onClick={(e) => e.stopPropagation()}>
                 <Dropdown
                   className="w-full"
@@ -753,6 +772,13 @@ export const LiveTest: React.FC<{
     result = (
       <div className="waitline">{t("onboarding.cleanup.test.runsItself")}</div>
     );
+  } else if (opt === "local" && !c.choice()) {
+    status = (
+      <span className="st">{t("onboarding.cleanup.test.waitingServer")}</span>
+    );
+    result = (
+      <div className="waitline">{t("onboarding.cleanup.test.setServer")}</div>
+    );
   } else if (opt === "cloud" && !c.choice()) {
     status = (
       <span className="st">{t("onboarding.cleanup.test.waitingKey")}</span>
@@ -807,19 +833,22 @@ export const LiveTest: React.FC<{
           <I icon={RotateCw} />
           {t("onboarding.retry")}
         </button>
-        {opt === "local" && e === "unreachable" && c.server && (
-          <button
-            type="button"
-            className="v-btn v-ghost"
-            onClick={() =>
-              api
-                .openLocalServerApp(c.server!.kind)
-                .catch((err) => console.warn("Open local server:", err))
-            }
-          >
-            {t("onboarding.cleanup.openServer", { name: serverName })}
-          </button>
-        )}
+        {opt === "local" &&
+          e === "unreachable" &&
+          c.server &&
+          c.server.kind !== "custom" && (
+            <button
+              type="button"
+              className="v-btn v-ghost"
+              onClick={() =>
+                api
+                  .openLocalServerApp(c.server!.kind)
+                  .catch((err) => console.warn("Open local server:", err))
+              }
+            >
+              {t("onboarding.cleanup.openServer", { name: serverName })}
+            </button>
+          )}
         {opt === "s1" && e === "start_failed" && c.server && (
           <button
             type="button"

@@ -21,7 +21,15 @@ Object.assign(window, {
   },
 });
 
-const state = fixture(theme);
+const state = fixture(theme, query.get("provider") ?? undefined);
+// A cleanup test passes, and saving it makes the tested choice the saved
+// one, so a test can switch provider and reopen the page.
+const BACKEND_PROVIDER: Record<string, string> = {
+  voce_local: "voce_local",
+  local_server: "custom",
+  apple_intelligence: "apple_intelligence",
+};
+let tested: { kind: string; provider_id?: string } | null = null;
 // ?experimental: Settings > Advanced > Experimental features on, which shows Terra (and its Memory page).
 if (query.has("experimental"))
   (
@@ -62,6 +70,23 @@ mockIPC(
       const clip = state.audio[a.fileName as string];
       if (!clip) throw "This recording's audio is no longer kept";
       return clip;
+    }
+    if (command === "test_cleanup") {
+      tested = a.choice as typeof tested;
+      return {
+        request_id: a.requestId,
+        outcome: "passed",
+        output: "I think we should move the standup to Thursday at 10.",
+        ms: 120,
+        start_ms: 0,
+      };
+    }
+    if (command === "save_cleanup_choice" && tested) {
+      const s = state.replies.get_app_settings as Record<string, unknown>;
+      s.post_process_enabled = true;
+      s.post_process_provider_id =
+        BACKEND_PROVIDER[tested.kind] ?? tested.provider_id;
+      return null;
     }
     if (command.startsWith("change_") || command.startsWith("set_"))
       return null;

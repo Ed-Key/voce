@@ -176,7 +176,11 @@
       },
       "servers": {
         "lm_studio": "LM Studio",
-        "ollama": "Ollama"
+        "ollama": "Ollama",
+        "custom": "Custom server"
+      },
+      "custom": {
+        "short": "Any OpenAI-compatible server. Set its address and model under Advanced."
       },
       "local": {
         "description": "Uses a model you already have in {{name}}.",
@@ -206,6 +210,8 @@
         "off": "No cleanup",
         "waitingKey": "Waiting for a key",
         "pasteKey": "Paste a key and the test runs by itself.",
+        "waitingServer": "Waiting for a server",
+        "setServer": "Set the server's address and model under Advanced, and the test runs by itself.",
         "runAgain": "Run again",
         "startingHere": "Starting cleanup on this Mac"
       },

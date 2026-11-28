@@ -164,3 +164,43 @@ test("a migrated user can turn off reading names on screen", async ({
     ]);
   await expect(names).toHaveAttribute("aria-checked", "false");
 });
+
+// Review finding 3 (row C4): with no server detected and none saved, Settings > Cleanup still offers a
+// custom server whose address and model are typed under Advanced.
+test("a custom cleanup server can be set up with none detected", async ({
+  page,
+}) => {
+  await open(page, "section=cleanup&provider=voce_local");
+  await page.getByRole("radio", { name: /Custom server/ }).click();
+  const url = page.getByRole("textbox", { name: "Base URL" });
+  await url.fill("http://127.0.0.1:8080/v1");
+  await url.blur();
+  const model = page.getByRole("textbox", { name: "Model name" });
+  await model.fill("my-model");
+  await model.blur();
+  await expect
+    .poll(async () =>
+      (await invoked(page, "test_cleanup")).map((c) => c.args.choice),
+    )
+    .toContainEqual({
+      kind: "local_server",
+      base_url: "http://127.0.0.1:8080/v1",
+      model: "my-model",
+    });
+});
+
+// Review finding 4 (row 16): Apple Intelligence is offered whenever this Mac supports it; switching to
+// it saves, and reopening the page shows it chosen.
+test("switching to Apple Intelligence saves and survives reopening", async ({
+  page,
+}) => {
+  await open(page, "section=cleanup");
+  const apple = page.getByRole("radio", { name: /Apple Intelligence/ });
+  await apple.click();
+  await expect
+    .poll(async () => (await invoked(page, "save_cleanup_choice")).length)
+    .toBe(1);
+  await page.locator('nav [data-section="general"]').click();
+  await page.locator('nav [data-section="cleanup"]').click();
+  await expect(apple).toHaveAttribute("aria-checked", "true");
+});
