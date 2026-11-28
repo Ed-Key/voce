@@ -220,6 +220,11 @@ jobs:
           set -euo pipefail
           DMG=$(find "$BUNDLE/dmg" -maxdepth 1 -name "*.dmg" | head -1)
           UPDATE=$(find "$BUNDLE/macos" -maxdepth 1 -name "*.app.tar.gz" | head -1)
+          [ -n "$DMG" ] && [ -n "$UPDATE" ] || { echo "::error::DMG or update package missing"; exit 1; }
+          # A copy without the version in its name, so the README's
+          # releases/latest/download/Voce.dmg link always gets the newest one.
+          STABLE_DMG="$RUNNER_TEMP/Voce.dmg"
+          cp "$DMG" "$STABLE_DMG"
           NAME=$(basename "$UPDATE" | tr ' ' '.')
           python3 - "$UPDATE.sig" "$NAME" <<'PY'
           import json, os, sys, datetime
@@ -241,7 +246,7 @@ jobs:
           fi
           gh release create "$TAG" --draft --target "$GITHUB_SHA" --title "Voce $TAG" \
             --notes "$NOTES" \
-            "$DMG" "$UPDATE" "$UPDATE.sig" latest.json
+            "$DMG" "$STABLE_DMG" "$UPDATE" "$UPDATE.sig" latest.json
 
       - name: Keep the rehearsal build
         if: env.RELEASE != 'true'

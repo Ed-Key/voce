@@ -12,7 +12,7 @@
 <p align="center">Private, on-device dictation for macOS.<br>An open-source alternative to Wispr Flow.</p>
 
 <p align="center">
-  <a href="https://github.com/Ed-Key/voce/releases/latest/download/Voce_1.1.0_aarch64.dmg"><b>Download Voce for Mac</b></a>
+  <a href="https://github.com/Ed-Key/voce/releases/latest/download/Voce.dmg"><b>Download Voce for Mac</b></a>
   <br>
   <sub>Apple Silicon, macOS 14.4 or later. Free and open source.</sub>
 </p>
@@ -28,7 +28,7 @@ Hold a key, speak, let go: your words are transcribed on your Mac, cleaned up by
 
 ## Install
 
-1. Download [Voce for Mac](https://github.com/Ed-Key/voce/releases/latest/download/Voce_1.1.0_aarch64.dmg) and open it.
+1. Download [Voce for Mac](https://github.com/Ed-Key/voce/releases/latest/download/Voce.dmg) and open it.
 2. Drag Voce to Applications, then open it.
 3. The first time, macOS says it cannot check the app for malicious software, because Voce is not notarized by Apple. Open System Settings, then Privacy & Security, scroll down and click **Open Anyway**.
 
