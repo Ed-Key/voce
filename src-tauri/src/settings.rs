@@ -2072,6 +2072,9 @@ mod onboarding_tests {
         assert_eq!(old.bindings["transcribe"].current_binding, "ctrl+k");
         assert!(old.post_process_enabled);
         assert_eq!(old.post_process_provider_id, "custom");
+        // They skip the Names step, so names on screen stay on until turned
+        // off in Settings > Advanced (review finding 2).
+        assert!(old.screen_names);
 
         // Neither field, but a model was chosen.
         let picked = load(json!({"selected_model": "parakeet"}));

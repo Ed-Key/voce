@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { ShowOverlay } from "../ShowOverlay";
 import { ModelUnloadTimeoutSetting } from "../ModelUnloadTimeout";
 import { CustomWords } from "../CustomWords";
+import { ScreenNames } from "../ScreenNames";
 import { SettingsGroup } from "../../ui/SettingsGroup";
 import { PageHeader } from "../../ui/PageHeader";
 import { StartHidden } from "../StartHidden";
@@ -54,6 +55,7 @@ export const AdvancedSettings: React.FC = () => {
         <FillerWordRemoval descriptionMode="tooltip" grouped={true} />
         <ChineseScriptSetting descriptionMode="tooltip" grouped={true} />
         <CustomWords descriptionMode="tooltip" grouped />
+        <ScreenNames descriptionMode="inline" grouped />
         <AppendTrailingSpace descriptionMode="tooltip" grouped={true} />
       </SettingsGroup>
 

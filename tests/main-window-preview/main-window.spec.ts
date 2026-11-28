@@ -4,6 +4,17 @@ import { expect, test, type Page } from "@playwright/test";
 const shots = process.env.SHOTS;
 const URL = "/tests/main-window-preview/index.html";
 
+type Invoked = { command: string; args: Record<string, unknown> }[];
+// The commands the page sent with `command`'s name (preview.tsx records them).
+const invoked = (page: Page, command: string) =>
+  page.evaluate(
+    (name) =>
+      (window as unknown as { __invoked: Invoked }).__invoked.filter(
+        (c) => c.command === name,
+      ),
+    command,
+  );
+
 async function open(page: Page, query: string) {
   await page.goto(`${URL}?${query}`);
   await page.waitForSelector("body[data-ready='1']");
@@ -132,4 +143,24 @@ test("keyboard activation of a nav entry moves the highlight with the page", asy
     "aria-current",
     "page",
   );
+});
+
+// Review finding 2 (onboarding row 24): this fixture is a user migrated past onboarding (done, no
+// screen_names stored), so names on screen are on; Settings > Advanced can turn them off.
+test("a migrated user can turn off reading names on screen", async ({
+  page,
+}) => {
+  await open(page, "section=advanced");
+  const names = page.getByRole("switch", { name: "Read names on screen" });
+  await expect(names).toHaveAttribute("aria-checked", "true");
+  await expect(
+    page.getByText("Skips password fields. What it reads stays on your Mac."),
+  ).toBeVisible();
+  await names.click();
+  await expect
+    .poll(async () => await invoked(page, "change_screen_names_setting"))
+    .toEqual([
+      { command: "change_screen_names_setting", args: { enabled: false } },
+    ]);
+  await expect(names).toHaveAttribute("aria-checked", "false");
 });

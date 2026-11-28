@@ -47,9 +47,14 @@ if (navigator.webdriver) {
   });
 }
 
+// Commands the page sent, for tests that check what a click did.
+const invoked: { command: string; args: unknown }[] = [];
+Object.assign(window, { __invoked: invoked });
+
 mockIPC(
   async (command, args) => {
     const a = (args ?? {}) as Record<string, unknown>;
+    invoked.push({ command, args });
     if (command.startsWith("plugin:event|")) return 1;
     if (command.startsWith("plugin:macos-permissions|")) return true;
     if (command === "plugin:app|version") return "0.9.8";
