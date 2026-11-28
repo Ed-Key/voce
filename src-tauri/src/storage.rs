@@ -34,7 +34,8 @@ pub struct StorageItem {
     pub name: String,
     /// Bytes on disk (HF cache files included; within a few percent).
     pub bytes: f64,
-    /// Calls or dictations, for call data and history.
+    /// Calls, dictations or recording files, for call data, history and
+    /// recordings.
     pub count: Option<u32>,
     pub in_use: bool,
     pub removable: bool,
@@ -115,6 +116,8 @@ fn disk_space(_path: &Path) -> (u64, u64) {
     (0, 0)
 }
 
+/// An item that counts its contents is removable only when it holds some:
+/// an empty history database still has a nonzero file size.
 fn item(id: &str, kind: StorageKind, bytes: u64, count: Option<u32>) -> StorageItem {
     StorageItem {
         id: id.to_string(),
@@ -123,8 +126,20 @@ fn item(id: &str, kind: StorageKind, bytes: u64, count: Option<u32>) -> StorageI
         bytes: bytes as f64,
         count,
         in_use: false,
-        removable: removable(kind, false),
+        removable: removable(kind, false) && count != Some(0),
     }
+}
+
+/// Files in a folder, hidden ones (Finder's .DS_Store) left out.
+fn file_count(dir: &Path) -> u32 {
+    std::fs::read_dir(dir)
+        .map(|entries| {
+            entries
+                .flatten()
+                .filter(|e| e.path().is_file() && !e.file_name().to_string_lossy().starts_with('.'))
+                .count() as u32
+        })
+        .unwrap_or(0)
 }
 
 #[tauri::command]
@@ -192,7 +207,7 @@ fn report(app: &AppHandle) -> Result<StorageReport, String> {
         "recordings",
         StorageKind::Recordings,
         size_of(history.recordings_dir()),
-        None,
+        Some(file_count(history.recordings_dir())),
     ));
     let calls = data.join("calls");
     let call_count = std::fs::read_dir(&calls)
@@ -314,6 +329,35 @@ mod tests {
         assert_eq!(size_of(&snapshot), 4096);
         let (free, total) = disk_space(dir.path());
         assert!(total > 0 && free <= total);
+    }
+
+    /// An empty history database keeps a nonzero size, and Finder can drop a
+    /// .DS_Store into the recordings folder: the count decides, not bytes.
+    #[test]
+    fn row26_history_and_recordings_with_nothing_in_them_offer_no_clear() {
+        let empty = item("history", StorageKind::History, 24_576, Some(0));
+        assert!(!empty.removable, "0 dictations: no Clear");
+        assert!(item("history", StorageKind::History, 24_576, Some(1)).removable);
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(".DS_Store"), [0u8; 6148]).unwrap();
+        assert_eq!(file_count(dir.path()), 0);
+        let none = item(
+            "recordings",
+            StorageKind::Recordings,
+            size_of(dir.path()),
+            Some(file_count(dir.path())),
+        );
+        assert!(none.bytes > 0.0 && !none.removable);
+        std::fs::write(dir.path().join("rec-1.wav"), b"RIFF").unwrap();
+        assert!(
+            item(
+                "recordings",
+                StorageKind::Recordings,
+                4,
+                Some(file_count(dir.path()))
+            )
+            .removable
+        );
     }
 
     #[test]

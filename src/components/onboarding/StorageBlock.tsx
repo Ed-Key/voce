@@ -242,9 +242,11 @@ export const StorageBlock: React.FC<Props> = ({
                     <I icon={ArrowRight} s={15} />
                   </button>
                 ) : (
-                  // Nothing to remove at 0 bytes, so no trash icon.
+                  // Nothing to remove, so no trash icon: an item that counts
+                  // its contents goes by the count (an empty history
+                  // database still has a size), others by bytes.
                   i.removable &&
-                  i.bytes > 0 && (
+                  (i.count != null ? i.count > 0 : i.bytes > 0) && (
                     <button
                       type="button"
                       className="v-ib"

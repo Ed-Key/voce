@@ -203,15 +203,26 @@ const fake: OnboardingApi = {
       ]) => ({
         id,
         kind,
-        // "empty": nothing saved yet in recordings and history.
+        // "empty": nothing saved yet in recordings and history, as the app
+        // reports it: an empty history database and a recordings folder
+        // holding only .DS_Store still have a size.
         bytes:
-          state === "empty" && (kind === "recordings" || kind === "history")
-            ? 0
-            : bytes,
+          state === "empty" && kind === "recordings"
+            ? 6148
+            : state === "empty" && kind === "history"
+              ? 24576
+              : bytes,
         removable,
         name,
         inUse,
-        count,
+        count:
+          kind === "recordings"
+            ? state === "empty"
+              ? 0
+              : 3
+            : state === "empty" && kind === "history"
+              ? 0
+              : count,
         retention: kind === "recordings" ? "days3" : undefined,
       }),
     ) as StorageItem[],
